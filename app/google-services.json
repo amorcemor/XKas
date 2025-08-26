@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1007850649552",
+    "project_id": "xkas-604b7",
+    "storage_bucket": "xkas-604b7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1007850649552:android:8a979101e82d23beb4abd5",
+        "android_client_info": {
+          "package_name": "com.mibi.xkas"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAHuy-51Uq2cl9xv-mCxgkAVjdtpcMHjrk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
