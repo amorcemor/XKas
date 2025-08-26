@@ -1,126 +1,65 @@
-package com.mibi.xkas.ui.utils
+package com.mibi.xkas.utils
 
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+object CalculatorUtils {
 
-/**
- * Custom keyboard manager untuk mengelola tampilan keyboard kustom
- */
-class CustomKeyboardManager {
-    var isCustomKeyboardVisible by mutableStateOf(false)
-        private set
+    /**
+     * Melakukan operasi matematika sederhana
+     */
+    fun calculate(leftOperand: String, operator: String, rightOperand: String): String {
+        val left = leftOperand.toDoubleOrNull() ?: 0.0
+        val right = rightOperand.toDoubleOrNull() ?: 0.0
 
-    var currentFieldId by mutableStateOf<String?>(null)
-        private set
-
-    fun showCustomKeyboard(fieldId: String) {
-        currentFieldId = fieldId
-        isCustomKeyboardVisible = true
-    }
-
-    fun hideCustomKeyboard() {
-        isCustomKeyboardVisible = false
-        currentFieldId = null
-    }
-
-    fun isKeyboardVisibleFor(fieldId: String): Boolean {
-        return isCustomKeyboardVisible && currentFieldId == fieldId
-    }
-}
-
-/**
- * Hook untuk menggunakan custom keyboard manager
- */
-@Composable
-fun rememberCustomKeyboardManager(): CustomKeyboardManager {
-    return remember { CustomKeyboardManager() }
-}
-
-/**
- * Efek untuk menyembunyikan system keyboard saat custom keyboard aktif
- */
-@Composable
-fun CustomKeyboardEffect(
-    keyboardManager: CustomKeyboardManager
-) {
-    val systemKeyboardController = LocalSoftwareKeyboardController.current
-
-    DisposableEffect(keyboardManager.isCustomKeyboardVisible) {
-        if (keyboardManager.isCustomKeyboardVisible) {
-            systemKeyboardController?.hide()
+        val result = when (operator) {
+            "+" -> left + right
+            "-" -> left - right
+            "×" -> left * right
+            "÷" -> if (right != 0.0) left / right else left
+            else -> right
         }
 
-        onDispose { }
-    }
-}
-
-/**
- * Utility functions untuk format angka
- */
-object NumberUtils {
-    fun formatToRupiah(amount: String): String {
-        if (amount.isBlank()) return "Rp 0"
-
-        return try {
-            val number = amount.toLongOrNull() ?: 0L
-            "Rp ${number.toString().reversed().chunked(3).joinToString(".").reversed()}"
-        } catch (e: Exception) {
-            "Rp 0"
+        // Kembalikan sebagai Long jika hasilnya adalah bilangan bulat
+        return if (result == result.toLong().toDouble()) {
+            result.toLong().toString()
+        } else {
+            result.toString()
         }
     }
 
-    fun formatNumber(number: String): String {
-        if (number.isBlank()) return "0"
+    /**
+     * Validasi input digit agar tidak melebihi batas maksimum
+     */
+    fun validateDigitInput(currentValue: String, newDigit: String, maxLength: Int = 12): String {
+        val combined = currentValue + newDigit
+        val digitsOnly = combined.filter { it.isDigit() }
 
-        return try {
-            val num = number.toLongOrNull() ?: 0L
-            num.toString().reversed().chunked(3).joinToString(".").reversed()
-        } catch (e: Exception) {
+        return if (digitsOnly.length <= maxLength) {
+            digitsOnly
+        } else {
+            currentValue
+        }
+    }
+
+    /**
+     * Membersihkan nilai dan mereset ke "0"
+     */
+    fun clearValue(): String = "0"
+
+    /**
+     * Menghapus digit terakhir
+     */
+    fun backspace(currentValue: String): String {
+        return if (currentValue.length > 1) {
+            currentValue.dropLast(1)
+        } else {
             "0"
         }
     }
 
-    fun calculateExpression(expression: String): Double? {
-        return try {
-            // Simple calculator logic
-            // This is a basic implementation, you might want to use a proper math expression evaluator
-            val cleanExpression = expression.replace("×", "*").replace("÷", "/")
-
-            // Basic arithmetic operations
-            when {
-                "+" in cleanExpression -> {
-                    val parts = cleanExpression.split("+")
-                    if (parts.size == 2) {
-                        parts[0].trim().toDouble() + parts[1].trim().toDouble()
-                    } else null
-                }
-                "-" in cleanExpression -> {
-                    val parts = cleanExpression.split("-")
-                    if (parts.size == 2) {
-                        parts[0].trim().toDouble() - parts[1].trim().toDouble()
-                    } else null
-                }
-                "*" in cleanExpression -> {
-                    val parts = cleanExpression.split("*")
-                    if (parts.size == 2) {
-                        parts[0].trim().toDouble() * parts[1].trim().toDouble()
-                    } else null
-                }
-                "/" in cleanExpression -> {
-                    val parts = cleanExpression.split("/")
-                    if (parts.size == 2 && parts[1].trim().toDouble() != 0.0) {
-                        parts[0].trim().toDouble() / parts[1].trim().toDouble()
-                    } else null
-                }
-                else -> cleanExpression.toDoubleOrNull()
-            }
-        } catch (e: Exception) {
-            null
-        }
+    /**
+     * Menambahkan beberapa nol sekaligus (00, 000)
+     */
+    fun addZeros(currentValue: String, zerosCount: Int, maxLength: Int = 12): String {
+        val zeros = "0".repeat(zerosCount)
+        return validateDigitInput(currentValue, zeros, maxLength)
     }
 }

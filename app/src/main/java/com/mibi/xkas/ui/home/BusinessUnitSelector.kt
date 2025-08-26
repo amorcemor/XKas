@@ -62,7 +62,7 @@ fun BusinessUnitSelector(
                         modifier = Modifier.width(IntrinsicSize.Min)
                     ) {
                         TextField(
-                            value = selectedBusinessUnit?.name ?: "Pilih Unit Bisnis",
+                            value = selectedBusinessUnit?.name ?: "Pilih Bisnis",
                             onValueChange = {},
                             readOnly = true,
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
@@ -102,7 +102,7 @@ fun BusinessUnitSelector(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        "Tambah Unit Bisnis Baru...",
+                                        "Tambah Bisnis Baru...",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -127,7 +127,7 @@ fun BusinessUnitSelector(
             is HomeViewModel.BusinessUnitUiState.Empty -> {
                 Text("Tidak ada Unit Bisnis terdaftar.")
                 Button(onClick = { /* TODO: Navigasi ke layar tambah BU */ }) {
-                    Text("Tambah Unit Bisnis")
+                    Text("Tambah Bisnis")
                 }
             }
         }

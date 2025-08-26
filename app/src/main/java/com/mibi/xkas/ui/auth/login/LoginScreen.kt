@@ -61,6 +61,11 @@ import com.mibi.xkas.R
 import com.mibi.xkas.ui.theme.MyNewButtonBackgroundColor
 import com.mibi.xkas.ui.theme.MyNewButtonContentColor
 import com.mibi.xkas.ui.theme.XKasTheme
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.remember
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,25 +80,37 @@ fun LoginScreen(
     // var email by rememberSaveable { mutableStateOf("") } // Pindahkan ke ViewModel
     // var password by rememberSaveable { mutableStateOf("") } // Pindahkan ke ViewModel
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    var backPressedTime by remember { mutableStateOf(0L) }
 
     val context = LocalContext.current // Untuk menampilkan Toast
     val loginState = loginViewModel.loginResultState // Amati state dari ViewModel
 
-    // Handle efek samping dari perubahan loginState (mis. navigasi, tampilkan Toast)
+    // ✅ TAMBAHKAN BackHandler INI
+    BackHandler {
+        if (backPressedTime + 2000 > System.currentTimeMillis()) {
+            (context as? ComponentActivity)?.finishAffinity()
+        } else {
+            Toast.makeText(
+                context,
+                "Tekan sekali lagi untuk keluar aplikasi",
+                Toast.LENGTH_SHORT
+            ).show()
+            backPressedTime = System.currentTimeMillis()
+        }
+    }
+
+    // Handle efek samping dari perubahan loginState
     LaunchedEffect(loginState) {
         when (loginState) {
             is LoginResultState.Success -> {
                 Toast.makeText(context, "Login Berhasil!", Toast.LENGTH_SHORT).show()
-                onLoginSuccess() // Panggil navigasi setelah sukses
+                onLoginSuccess()
                 loginViewModel.resetLoginResultState()
             }
             is LoginResultState.Error -> {
                 Toast.makeText(context, loginState.message, Toast.LENGTH_LONG).show()
-                // Pertimbangkan untuk tidak mereset state di sini agar pesan error bisa ditampilkan di UI
-                // Jika hanya Toast, bisa di-reset agar tidak muncul lagi jika user berinteraksi
-                // loginViewModel.resetLoginResultState() // Opsional
             }
-            else -> { /* Idle atau Loading, tidak perlu aksi navigasi di sini */ }
+            else -> { /* Idle atau Loading */ }
         }
     }
 
@@ -120,15 +137,15 @@ fun LoginScreen(
                     .padding(top = 32.dp, bottom = 16.dp),
                 contentScale = ContentScale.Fit
             )
-            // ----> TAMBAHKAN SPACER DI SINI <----
-            // Sesuaikan nilai 'height' untuk mengatur seberapa jauh Surface didorong ke bawah.
-            Spacer(modifier = Modifier.height(42.dp)) // Contoh: mendorong 32.dp ke bawah
+
+            Spacer(modifier = Modifier.height(42.dp))
 
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .fillMaxHeight()
                     // .height(470.dp) // Tinggi tetap mungkin kurang responsif, pertimbangkan weight atau wrapContent
-                    .padding(bottom = 4.dp), // Beri padding bawah jika Surface tidak mengisi semua sisa ruang
+                    .padding(bottom = 0.dp), // Beri padding bawah jika Surface tidak mengisi semua sisa ruang
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                 color = formContainerColor,
                 shadowElevation = 4.dp

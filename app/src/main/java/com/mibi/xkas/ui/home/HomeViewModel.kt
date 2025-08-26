@@ -1,15 +1,16 @@
 package com.mibi.xkas.ui.home
 
 import android.util.Log
-import androidx.lifecycle.SavedStateHandle // Pastikan ini di-import
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.mibi.xkas.data.BusinessUnit
+import com.mibi.xkas.data.BusinessUnitType
 import com.mibi.xkas.data.Transaction
 import com.mibi.xkas.data.repository.BusinessUnitRepository
 import com.mibi.xkas.data.repository.TransactionRepository
-import com.mibi.xkas.ui.addedit.BUSINESS_UNIT_ADDED_KEY // <--- TAMBAHKAN IMPORT INI
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,7 +28,6 @@ import java.util.Calendar
 import java.util.Date
 import javax.inject.Inject
 
-
 enum class DateFilterType {
     TODAY,
     THIS_WEEK,
@@ -39,7 +39,7 @@ enum class DateFilterType {
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    private val savedStateHandle: SavedStateHandle, // Sudah ada
+    private val savedStateHandle: SavedStateHandle,
     private val transactionRepository: TransactionRepository,
     private val businessUnitRepository: BusinessUnitRepository,
     private val firebaseAuth: FirebaseAuth
@@ -52,6 +52,9 @@ class HomeViewModel @Inject constructor(
         object Empty : BusinessUnitUiState
     }
 
+    private val _isCreatingBusinessUnit = MutableStateFlow(false)
+    val isCreatingBusinessUnit: StateFlow<Boolean> = _isCreatingBusinessUnit.asStateFlow()
+
     private val _businessUnitUiState = MutableStateFlow<BusinessUnitUiState>(BusinessUnitUiState.Loading)
     val businessUnitUiState: StateFlow<BusinessUnitUiState> = _businessUnitUiState.asStateFlow()
 
@@ -61,8 +64,9 @@ class HomeViewModel @Inject constructor(
     private val _showBusinessUnitSelectionDialog = MutableStateFlow(false)
     val showBusinessUnitSelectionDialog: StateFlow<Boolean> = _showBusinessUnitSelectionDialog.asStateFlow()
 
-    private var isInitialBusinessUnitCheck = false
-
+    // PERBAIKAN: Tambahkan flag untuk mengecek apakah ini benar-benar pertama kali aplikasi dibuka
+    private var hasEverLoadedBusinessUnits = false
+    private var isReallyFirstTime = true
 
     private val _rawTransactionsForSelectedBU = MutableStateFlow<List<Transaction>>(emptyList())
     private val _currentDateFilter = MutableStateFlow(DateFilterType.THIS_MONTH)
@@ -75,7 +79,6 @@ class HomeViewModel @Inject constructor(
     private val _showAddFirstTransactionDialog = MutableStateFlow(false)
     val showAddFirstTransactionDialog: StateFlow<Boolean> = _showAddFirstTransactionDialog.asStateFlow()
     private var isPotentiallyFirstTimeUserSession = true
-
 
     val transactionsUiState: StateFlow<TransactionListUiState> =
         combine(
@@ -96,7 +99,7 @@ class HomeViewModel @Inject constructor(
 
             if (currentBU == null) {
                 TransactionListUiState.SelectBusinessUnit
-            } else if (isLoadingTrans && rawTransactions.isEmpty() && _businessUnitUiState.value !is BusinessUnitUiState.Empty ) { // Tambahan cek agar tidak loading jika BU memang empty
+            } else if (isLoadingTrans && rawTransactions.isEmpty() && _businessUnitUiState.value !is BusinessUnitUiState.Empty) {
                 TransactionListUiState.Loading
             } else {
                 filterTransactions(rawTransactions, filterType, startDateMillis, endDateMillis, isLoadingTrans)
@@ -107,21 +110,7 @@ class HomeViewModel @Inject constructor(
             initialValue = TransactionListUiState.SelectBusinessUnit
         )
 
-
     init {
-        // Observasi perubahan dari SavedStateHandle untuk penambahan/edit BU
-        viewModelScope.launch {
-            savedStateHandle.getStateFlow<Boolean?>(BUSINESS_UNIT_ADDED_KEY, null) // Gunakan KEY yang di-import
-                .collectLatest { buAddedOrEdited ->
-                    if (buAddedOrEdited == true) {
-                        Log.d("HomeViewModel", "$BUSINESS_UNIT_ADDED_KEY diterima: true. Memuat ulang unit bisnis.")
-                        isInitialBusinessUnitCheck = false // Ini bukan lagi pengecekan awal
-                        loadUserBusinessUnitAndDecideDialog()
-                        savedStateHandle[BUSINESS_UNIT_ADDED_KEY] = null // Reset flag
-                    }
-                }
-        }
-
         // Logika untuk memuat transaksi berdasarkan _selectedBusinessUnit
         viewModelScope.launch {
             _selectedBusinessUnit
@@ -149,25 +138,35 @@ class HomeViewModel @Inject constructor(
                     _isLoadingTransactions.value = false
                 }
         }
-        // Pemanggilan awal tidak dilakukan di sini lagi, tapi melalui triggerInitialBusinessUnitCheck()
-        // atau dari SavedStateHandle di atas.
     }
 
+    // PERBAIKAN: Fungsi baru untuk initial check yang benar-benar hanya untuk pertama kali
     fun triggerInitialBusinessUnitCheck() {
-        Log.d("HomeViewModel", "triggerInitialBusinessUnitCheck called")
-        // Hanya set isInitialBusinessUnitCheck jika belum ada BU yang dipilih
-        // ATAU jika _businessUnitUiState masih loading/error awal.
-        // Ini untuk mencegah re-trigger dialog pemilihan jika user sudah memilih BU
-        // dan hanya kembali ke home tanpa ada perubahan dari SavedStateHandle.
-        if (_selectedBusinessUnit.value == null || _businessUnitUiState.value is BusinessUnitUiState.Loading || _businessUnitUiState.value is BusinessUnitUiState.Error) {
-            isInitialBusinessUnitCheck = true
+        Log.d("HomeViewModel", "triggerInitialBusinessUnitCheck called, isReallyFirstTime: $isReallyFirstTime")
+
+        // Hanya lakukan initial check jika benar-benar pertama kali
+        if (isReallyFirstTime) {
+            isReallyFirstTime = false // Set ke false setelah pertama kali
+            loadUserBusinessUnitAndDecideDialog(isInitialCheck = true)
         } else {
-            isInitialBusinessUnitCheck = false // Jika sudah ada BU terpilih, anggap bukan initial check lagi.
+            // Jika bukan pertama kali, hanya refresh data tanpa dialog
+            loadUserBusinessUnitAndDecideDialog(isInitialCheck = false, showDialogOnRefresh = false)
         }
-        loadUserBusinessUnitAndDecideDialog()
     }
 
-    private fun loadUserBusinessUnitAndDecideDialog() {
+    // PERBAIKAN: Fungsi baru untuk navigasi dari menu lain
+    fun onNavigatedFromOtherMenu() {
+        Log.d("HomeViewModel", "onNavigatedFromOtherMenu called")
+        // Ketika navigasi dari menu lain, refresh data tapi jangan tampilkan dialog
+        loadUserBusinessUnitAndDecideDialog(isInitialCheck = false, showDialogOnRefresh = false)
+    }
+
+    // PERBAIKAN: Update fungsi loadUserBusinessUnitAndDecideDialog dengan parameter tambahan
+    private fun loadUserBusinessUnitAndDecideDialog(
+        isInitialCheck: Boolean = false,
+        forceRefresh: Boolean = false,
+        showDialogOnRefresh: Boolean = true
+    ) {
         val userId = firebaseAuth.currentUser?.uid
         if (userId.isNullOrBlank()) {
             Log.w("HomeViewModel", "UserID tidak tersedia.")
@@ -177,22 +176,24 @@ class HomeViewModel @Inject constructor(
             return
         }
 
-        Log.d("HomeViewModel", "loadUserBusinessUnitAndDecideDialog called for userId: $userId, isInitial: $isInitialBusinessUnitCheck")
+        Log.d("HomeViewModel", "loadUserBusinessUnitAndDecideDialog called for userId: $userId, isInitialCheck: $isInitialCheck, forceRefresh: $forceRefresh")
+
         viewModelScope.launch {
-            // Jangan langsung set ke Loading jika sudah Success atau Empty, kecuali jika isInitialBusinessUnitCheck
-            // Ini untuk menghindari kedipan loading jika hanya refresh minor
-            if (isInitialBusinessUnitCheck || _businessUnitUiState.value !is BusinessUnitUiState.Success) {
+            // Set loading hanya jika initial check atau force refresh
+            if (isInitialCheck || forceRefresh || _businessUnitUiState.value !is BusinessUnitUiState.Success) {
                 _businessUnitUiState.value = BusinessUnitUiState.Loading
             }
+
             try {
                 Log.d("HomeViewModel", "Mencoba mengumpulkan business units untuk userId: $userId")
-                businessUnitRepository.getUserBusinessUnit(userId).collectLatest { buList -> // INI BLOK YANG DIPERTAHANKAN
+                businessUnitRepository.getUserBusinessUnit(userId).collectLatest { buList ->
                     Log.d("HomeViewModel", "Business Units diterima: ${buList.size} unit.")
 
+                    hasEverLoadedBusinessUnits = true
                     val previousSelectedBuId = _selectedBusinessUnit.value?.businessUnitId
                     var newSelectedBuCandidate: BusinessUnit? = _selectedBusinessUnit.value
 
-                    // Jika BU yang terpilih sebelumnya sudah tidak ada di list baru, reset.
+                    // Validasi BU yang terpilih sebelumnya
                     if (newSelectedBuCandidate != null && buList.none { it.businessUnitId == newSelectedBuCandidate.businessUnitId }) {
                         Log.d("HomeViewModel", "BU terpilih (${newSelectedBuCandidate.name}) sudah tidak valid. Mereset.")
                         newSelectedBuCandidate = null
@@ -201,80 +202,62 @@ class HomeViewModel @Inject constructor(
                     if (buList.isNotEmpty()) {
                         _businessUnitUiState.value = BusinessUnitUiState.Success(buList)
 
-                        if (isInitialBusinessUnitCheck) {
-                            isInitialBusinessUnitCheck = false // Reset flag penting di sini
-                            if (newSelectedBuCandidate == null) { // Jika belum ada yang terpilih (atau yang lama tidak valid)
+                        // PERBAIKAN: Logic dialog yang lebih tepat
+                        if (isInitialCheck) {
+                            // Hanya untuk initial check (pertama kali app dibuka)
+                            if (newSelectedBuCandidate == null) {
                                 if (buList.size == 1) {
                                     newSelectedBuCandidate = buList.first()
                                     _showBusinessUnitSelectionDialog.value = false
-                                } else { // Lebih dari 1 BU
+                                } else {
                                     _showBusinessUnitSelectionDialog.value = true
                                 }
                             } else {
-                                // BU yang terpilih sebelumnya masih valid, biarkan.
                                 _showBusinessUnitSelectionDialog.value = false
                             }
-                        } else { // Bukan initial check (misalnya, refresh dari SavedStateHandle atau TopAppBar)
-                            if (newSelectedBuCandidate == null) { // Jika tidak ada BU yang terpilih (mungkin karena direset, atau memang belum pernah)
-                                if (buList.size == 1) {
-                                    newSelectedBuCandidate = buList.first()
-                                    _showBusinessUnitSelectionDialog.value = false
-                                } else if (buList.size > 1) {
-                                    _showBusinessUnitSelectionDialog.value = true
-                                }
-                            } else {
-                                // Jika sudah ada BU terpilih DAN dialog tidak sedang ingin ditampilkan secara eksplisit (misalnya karena klik TopAppBar)
-                                // maka jangan ubah state dialog. State dialog akan dikontrol oleh onTopBarBusinessUnitClicked.
-                                // Jika _showBusinessUnitSelectionDialog.value sudah true (misal dari onTopBarBusinessUnitClicked), biarkan.
-                                // Jika false, biarkan false.
-                                // Jadi, baris ini _showBusinessUnitSelectionDialog.value = false bisa jadi redundant atau
-                                // malah menutup dialog yang seharusnya terbuka karena klik top bar.
-                                // Untuk amannya, kita hanya set false jika memang belum ada yg terpilih dan hanya ada 1 BU.
-                                // Atau jika memang sudah ada yang terpilih dan ini bukan initial check.
-                                if (!_showBusinessUnitSelectionDialog.value) { // Hanya set false jika memang tidak sedang diminta untuk show.
-                                    _showBusinessUnitSelectionDialog.value = false
-                                }
+                        } else if (forceRefresh && showDialogOnRefresh) {
+                            // Untuk refresh dari SavedStateHandle (BU baru ditambah)
+                            if (newSelectedBuCandidate == null && buList.size > 1) {
+                                _showBusinessUnitSelectionDialog.value = true
                             }
                         }
-                    } else { // buList is empty
+                        // Untuk kasus lain (navigasi dari menu lain), tidak tampilkan dialog
+
+                    } else {
+                        // buList is empty
                         _businessUnitUiState.value = BusinessUnitUiState.Empty
                         newSelectedBuCandidate = null
-                        _rawTransactionsForSelectedBU.value = emptyList() // Pastikan transaksi dikosongkan
-                        if (isInitialBusinessUnitCheck) {
-                            isInitialBusinessUnitCheck = false
+                        _rawTransactionsForSelectedBU.value = emptyList()
+
+                        // Hanya tampilkan dialog jika initial check atau explicit refresh
+                        if (isInitialCheck || (forceRefresh && showDialogOnRefresh)) {
+                            _showBusinessUnitSelectionDialog.value = true
                         }
-                        // Jika daftar BU kosong, selalu tampilkan dialog untuk memungkinkan pengguna menambah BU baru.
-                        _showBusinessUnitSelectionDialog.value = true
                     }
 
-                    // Logika pembaruan _selectedBusinessUnit setelah semua kondisi dialog dan BU diperiksa
-                    if (previousSelectedBuId != newSelectedBuCandidate?.businessUnitId || (_selectedBusinessUnit.value == null && newSelectedBuCandidate != null)) {
+                    // Update selected business unit
+                    if (previousSelectedBuId != newSelectedBuCandidate?.businessUnitId ||
+                        (_selectedBusinessUnit.value == null && newSelectedBuCandidate != null)) {
                         Log.d("HomeViewModel", "Memperbarui _selectedBusinessUnit ke: ${newSelectedBuCandidate?.name}")
                         _selectedBusinessUnit.value = newSelectedBuCandidate
-                        // Pemuatan transaksi akan dipicu oleh perubahan _selectedBusinessUnit di kolektor lain.
                     } else if (newSelectedBuCandidate == null && previousSelectedBuId != null) {
-                        // Ini terjadi jika BU yang dipilih sebelumnya dihapus, dan tidak ada BU lain yang otomatis dipilih.
-                        Log.d("HomeViewModel", "Mereset _selectedBusinessUnit menjadi null karena BU tidak ada atau menjadi tidak valid.")
+                        Log.d("HomeViewModel", "Mereset _selectedBusinessUnit menjadi null")
                         _selectedBusinessUnit.value = null
                         _rawTransactionsForSelectedBU.value = emptyList()
                     }
 
-                    Log.d("HomeViewModel", "_showBusinessUnitSelectionDialog.value diatur menjadi: ${_showBusinessUnitSelectionDialog.value} pada akhir collectLatest")
-                    Log.d("HomeViewModel", "_selectedBusinessUnit.value saat ini: ${_selectedBusinessUnit.value?.name}")
-
+                    Log.d("HomeViewModel", "_showBusinessUnitSelectionDialog.value: ${_showBusinessUnitSelectionDialog.value}")
+                    Log.d("HomeViewModel", "_selectedBusinessUnit.value: ${_selectedBusinessUnit.value?.name}")
                 }
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "Error mengumpulkan business units", e)
                 _businessUnitUiState.value = BusinessUnitUiState.Error(e.message)
-                _selectedBusinessUnit.value = null // Reset BU terpilih jika ada error
-                _rawTransactionsForSelectedBU.value = emptyList() // Reset transaksi jika ada error
-                // Pertimbangkan apakah dialog harus ditampilkan dalam kasus error.
-                // Mungkin tidak, karena pengguna tidak bisa memilih apa-apa.
+                _selectedBusinessUnit.value = null
+                _rawTransactionsForSelectedBU.value = emptyList()
                 _showBusinessUnitSelectionDialog.value = false
             }
         }
     }
-
 
     fun onTopBarBusinessUnitClicked() {
         val userId = firebaseAuth.currentUser?.uid
@@ -286,133 +269,79 @@ class HomeViewModel @Inject constructor(
         Log.d("HomeViewModel", "onTopBarBusinessUnitClicked called")
 
         viewModelScope.launch {
-            // Selalu ambil daftar BU terbaru sebelum memutuskan
-            val currentBuState = _businessUnitUiState.value
-            // Untuk sementara, selalu set Loading agar terlihat ada aksi
-            // if (currentBuState !is BusinessUnitUiState.Success || currentBuState.businessUnit.isEmpty()) {
-            _businessUnitUiState.value = BusinessUnitUiState.Loading // Set Loading di awal
+            _businessUnitUiState.value = BusinessUnitUiState.Loading
             Log.d("HomeViewModel", "onTopBarBusinessUnitClicked: State diatur ke Loading.")
-            // }
 
-            try { // Tambahkan try-catch di sini
-                // Menggunakan .first() atau .firstOrNull() akan mengambil data sekali dan menutup Flow.
-                // Ini mungkin yang Anda inginkan untuk klik, agar tidak ada listener yang bocor.
+            try {
                 val buList = businessUnitRepository.getUserBusinessUnit(userId).firstOrNull() ?: emptyList()
                 Log.d("HomeViewModel", "onTopBarBusinessUnitClicked: Menerima ${buList.size} BU.")
 
                 if (buList.isNotEmpty()) {
                     _businessUnitUiState.value = BusinessUnitUiState.Success(buList)
                     Log.d("HomeViewModel", "onTopBarBusinessUnitClicked: State diatur ke Success dengan ${buList.size} BU.")
-                    if (buList.size > 1) {
-                        _showBusinessUnitSelectionDialog.value = true
-                        Log.d("HomeViewModel", "onTopBarBusinessUnitClicked: Menampilkan dialog karena >1 BU.")
-                    } else { // Hanya 1 BU
-                        // Jika ada 1 BU, apakah kita mau langsung pilih atau tetap tampilkan dialog?
-                        // Untuk saat ini, kita tampilkan dialog agar pengguna bisa melihat opsi "Tambah Baru" atau detail BU tersebut.
-                        // Jika Anda ingin memilihnya secara otomatis, Anda bisa memanggil setSelectedBusinessUnit di sini.
-                        _showBusinessUnitSelectionDialog.value = true // Tetap tampilkan dialog
-                        Log.d("HomeViewModel", "onTopBarBusinessUnitClicked: Menampilkan dialog untuk 1 BU (untuk opsi tambah/lihat).")
-                        // Jika Anda ingin memilihnya dan menutup dialog:
-                        // if (_selectedBusinessUnit.value?.businessUnitId != buList.first().businessUnitId) {
-                        //     setSelectedBusinessUnit(buList.first())
-                        // }
-                        // _showBusinessUnitSelectionDialog.value = false
-                    }
-                } else { // buList is empty
+                    // Selalu tampilkan dialog ketika user klik top bar (ini adalah tindakan eksplisit)
+                    _showBusinessUnitSelectionDialog.value = true
+                    Log.d("HomeViewModel", "onTopBarBusinessUnitClicked: Menampilkan dialog.")
+                } else {
                     _businessUnitUiState.value = BusinessUnitUiState.Empty
-                    // setSelectedBusinessUnit(null) // selectedBusinessUnit akan di-handle oleh kolektor loadUserBusinessUnit
                     Log.d("HomeViewModel", "onTopBarBusinessUnitClicked: State diatur ke Empty.")
-                    _showBusinessUnitSelectionDialog.value = true // Tampilkan dialog untuk tambah baru
+                    _showBusinessUnitSelectionDialog.value = true
                     Log.d("HomeViewModel", "onTopBarBusinessUnitClicked: Menampilkan dialog karena BU kosong.")
                 }
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "onTopBarBusinessUnitClicked: Error mengambil BU", e)
                 _businessUnitUiState.value = BusinessUnitUiState.Error("Gagal memuat unit bisnis: ${e.message}")
-                _showBusinessUnitSelectionDialog.value = false // Jangan tampilkan dialog jika ada error
+                _showBusinessUnitSelectionDialog.value = false
             }
         }
     }
 
     fun setSelectedBusinessUnit(businessUnit: BusinessUnit?) {
-        // Cek apakah benar-benar ada perubahan
         if (_selectedBusinessUnit.value?.businessUnitId != businessUnit?.businessUnitId) {
             Log.d("HomeViewModel", "Business Unit dipilih: ${businessUnit?.name ?: "Tidak ada (null)"}")
             _selectedBusinessUnit.value = businessUnit
-            // Jika BU baru dipilih (bukan null), tutup dialog.
-            // Jika businessUnit adalah null (misalnya, dari onTopBarBusinessUnitClicked dan tidak ada BU),
-            // dialog mungkin perlu tetap terbuka atau dibuka oleh logika di onTopBar...
-            // Jadi, _showBusinessUnitSelectionDialog diatur oleh pemanggil setSelectedBusinessUnit atau logika lain.
         } else if (businessUnit == null && _selectedBusinessUnit.value != null) {
-            // Kasus di mana businessUnit di-set ke null dan sebelumnya ada isinya.
             _selectedBusinessUnit.value = null
             Log.d("HomeViewModel", "Business Unit di-reset ke null.")
         }
-        // Jangan otomatis tutup dialog di sini, biarkan pemanggil yang mengontrol.
-        // _showBusinessUnitSelectionDialog.value = false
     }
-
 
     fun onBusinessUnitDialogDismiss() {
         _showBusinessUnitSelectionDialog.value = false
         Log.d("HomeViewModel", "Dialog BU ditutup (Dismiss).")
-        // Jika dialog ditutup dan ini adalah initial check dan belum ada BU terpilih,
-        // dan ADA business unit yang tersedia, pertimbangkan untuk memilih yang pertama.
-        // Ini adalah pilihan UX.
+
+        // PERBAIKAN: Hanya auto-select jika benar-benar initial check dan belum ada yang terpilih
         val currentBuState = _businessUnitUiState.value
-        if (isInitialBusinessUnitCheck && _selectedBusinessUnit.value == null &&
+        if (isReallyFirstTime && _selectedBusinessUnit.value == null &&
             currentBuState is BusinessUnitUiState.Success && currentBuState.businessUnit.isNotEmpty()) {
-            // Log.d("HomeViewModel", "Dialog awal ditutup tanpa memilih, memilih BU pertama: ${currentBuState.businessUnit.first().name}")
-            // setSelectedBusinessUnit(currentBuState.businessUnit.first()) // OPSI: pilih yang pertama
+            // Auto select first BU jika ini pertama kali dan belum ada yang dipilih
+            setSelectedBusinessUnit(currentBuState.businessUnit.first())
         }
-        isInitialBusinessUnitCheck = false // Pastikan flag direset setelah interaksi dialog awal
     }
 
+    // Sisa fungsi tetap sama...
     fun deleteBusinessUnit(businessUnitId: String) {
         viewModelScope.launch {
-            // Tampilkan state loading jika perlu (misalnya, pada BusinessUnitUiState)
-            // _businessUnitUiState.value = BusinessUnitUiState.Loading // Contoh
-
             try {
-                // Panggil metode repository untuk menghapus unit bisnis
-                // Ganti 'businessUnitRepository.deleteBusinessUnit' dengan metode yang sesuai di repository Anda
                 val deleteResult = businessUnitRepository.deleteBusinessUnit(businessUnitId)
+                if (deleteResult.isSuccess) {
+                    // Refresh setelah delete
+                    loadUserBusinessUnitAndDecideDialog(forceRefresh = true, showDialogOnRefresh = false)
 
-                if (deleteResult.isSuccess) { // Asumsi repository mengembalikan semacam Result wrapper
-                    // Penghapusan berhasil
-
-                    // 1. Perbarui daftar unit bisnis
-                    // Cara paling sederhana adalah memicu ulang pengambilan data unit bisnis
-                    triggerInitialBusinessUnitCheck() // atau fungsi lain yang me-refresh daftar
-
-                    // 2. Tangani jika unit bisnis yang dihapus adalah yang sedang dipilih
                     if (_selectedBusinessUnit.value?.businessUnitId == businessUnitId) {
-                        _selectedBusinessUnit.value = null // Atur ke null atau pilih BU lain
-                        // Jika Anda ingin otomatis memilih BU lain:
-                        // val currentList = (_businessUnitUiState.value as? BusinessUnitUiState.Success)?.businessUnit
-                        // _selectedBusinessUnit.value = currentList?.firstOrNull()
+                        _selectedBusinessUnit.value = null
                     }
-
-                    // Opsional: Tampilkan pesan sukses jika perlu
-                    // _snackbarMessage.value = "Unit bisnis berhasil dihapus"
-
                 } else {
-                    // Penghapusan gagal dari repository
-                    // _businessUnitUiState.value = BusinessUnitUiState.Error("Gagal menghapus unit bisnis.") // Contoh
-                    // _snackbarMessage.value = deleteResult.exceptionOrNull()?.message ?: "Gagal menghapus unit bisnis"
                     Log.e("HomeViewModel", "Gagal menghapus unit bisnis: ${deleteResult.exceptionOrNull()?.message}")
                 }
             } catch (e: Exception) {
-                // Tangani error jaringan atau exception lain
-                // _businessUnitUiState.value = BusinessUnitUiState.Error("Terjadi kesalahan: ${e.message}") // Contoh
-                // _snackbarMessage.value = "Terjadi kesalahan: ${e.message}"
                 Log.e("HomeViewModel", "Error saat menghapus unit bisnis", e)
             }
         }
     }
+
     fun updateBusinessUnitName(businessUnitId: String, newName: String) {
         viewModelScope.launch {
-            // Asumsi Anda punya fungsi di repository untuk update nama, atau update keseluruhan objek
-            // Jika repository Anda memerlukan seluruh objek BusinessUnit:
             val currentBusinessUnit = (_businessUnitUiState.value as? BusinessUnitUiState.Success)
                 ?.businessUnit
                 ?.find { it.businessUnitId == businessUnitId }
@@ -420,38 +349,109 @@ class HomeViewModel @Inject constructor(
             if (currentBusinessUnit != null) {
                 val updatedBusinessUnit = currentBusinessUnit.copy(name = newName)
                 try {
-                    // Panggil metode repository untuk update (misalnya, updateBusinessUnit)
-                    // Ganti dengan metode yang sesuai di repository Anda
                     val updateResult = businessUnitRepository.updateBusinessUnit(updatedBusinessUnit)
-
                     if (updateResult.isSuccess) {
-                        // Update berhasil
-                        triggerInitialBusinessUnitCheck() // Refresh daftar
+                        // Refresh setelah update
+                        loadUserBusinessUnitAndDecideDialog(forceRefresh = true, showDialogOnRefresh = false)
 
-                        // Jika BU yang diupdate adalah yang sedang dipilih, perbarui juga state selectedBusinessUnit
                         if (_selectedBusinessUnit.value?.businessUnitId == businessUnitId) {
                             _selectedBusinessUnit.value = updatedBusinessUnit
                         }
-                        // _snackbarMessage.value = "Nama unit bisnis berhasil diperbarui"
                     } else {
-                        // Update gagal dari repository
                         Log.e("HomeViewModel", "Gagal update nama unit bisnis: ${updateResult.exceptionOrNull()?.message}")
-                        // _snackbarMessage.value = updateResult.exceptionOrNull()?.message ?: "Gagal update nama"
                     }
                 } catch (e: Exception) {
                     Log.e("HomeViewModel", "Error saat update nama unit bisnis", e)
-                    // _snackbarMessage.value = "Terjadi kesalahan: ${e.message}"
                 }
             } else {
                 Log.e("HomeViewModel", "Tidak dapat menemukan unit bisnis untuk diupdate dengan ID: $businessUnitId")
-                // _snackbarMessage.value = "Unit bisnis tidak ditemukan"
             }
         }
     }
 
+    fun updateBusinessUnit(businessUnitId: String, newName: String, newDescription: String?, newType: BusinessUnitType, customTypeName: String? = null) {
+        viewModelScope.launch {
+            val currentBusinessUnit = (_businessUnitUiState.value as? BusinessUnitUiState.Success)
+                ?.businessUnit
+                ?.find { it.businessUnitId == businessUnitId }
 
-    // ... (sisa fungsi filterTransactions, onDialogDismissed, onDialogConfirmed, setDateFilter, setCustomDateRange, refreshTransactionsForCurrentBusinessUnit, dan helper tanggal TETAP SAMA)
-    // Fungsi helper tanggal tetap sama
+            if (currentBusinessUnit != null) {
+                val updatedBusinessUnit = currentBusinessUnit.copy(
+                    name = newName,
+                    description = newDescription,
+                    type = newType,
+                    customTypeName = if (newType == BusinessUnitType.OTHER) customTypeName else null,
+                    updatedAt = Timestamp.now()
+                )
+                try {
+                    val updateResult = businessUnitRepository.updateBusinessUnit(updatedBusinessUnit)
+                    if (updateResult.isSuccess) {
+                        loadUserBusinessUnitAndDecideDialog(forceRefresh = true, showDialogOnRefresh = false)
+
+                        if (_selectedBusinessUnit.value?.businessUnitId == businessUnitId) {
+                            _selectedBusinessUnit.value = updatedBusinessUnit
+                        }
+                    } else {
+                        Log.e("HomeViewModel", "Gagal update unit bisnis: ${updateResult.exceptionOrNull()?.message}")
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "Error saat update unit bisnis", e)
+                }
+            } else {
+                Log.e("HomeViewModel", "Tidak dapat menemukan unit bisnis untuk diupdate dengan ID: $businessUnitId")
+            }
+        }
+    }
+
+    fun createBusinessUnit(
+        name: String,
+        type: BusinessUnitType,
+        description: String?,
+        initialBalance: Double,
+        customTypeName: String? = null
+    ) {
+        val currentUserId = firebaseAuth.currentUser?.uid
+        if (currentUserId.isNullOrBlank()) {
+            Log.e("HomeViewModel", "User tidak terautentikasi saat membuat unit bisnis")
+            return
+        }
+
+        viewModelScope.launch {
+            _isCreatingBusinessUnit.value = true
+
+            try {
+                val newBusinessUnit = BusinessUnit(
+                    businessUnitId = "",
+                    userId = currentUserId,
+                    name = name.trim(),
+                    type = type,
+                    customTypeName = if (type == BusinessUnitType.OTHER) customTypeName else null,
+                    description = if (description.isNullOrBlank()) null else description.trim(),
+                    initialBalance = initialBalance,
+                    createdAt = Timestamp.now(),
+                    updatedAt = Timestamp.now(),
+                    isDefault = false
+                )
+
+                val createResult = businessUnitRepository.createBusinessUnit(newBusinessUnit)
+
+                if (createResult.isSuccess) {
+                    Log.d("HomeViewModel", "Unit bisnis berhasil dibuat: ${createResult.getOrNull()}")
+                    loadUserBusinessUnitAndDecideDialog(forceRefresh = true, showDialogOnRefresh = false)
+                    _showBusinessUnitSelectionDialog.value = false
+                } else {
+                    Log.e("HomeViewModel", "Gagal membuat unit bisnis: ${createResult.exceptionOrNull()?.message}")
+                }
+
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "Error saat membuat unit bisnis", e)
+            } finally {
+                _isCreatingBusinessUnit.value = false
+            }
+        }
+    }
+
+    // Fungsi helper tanggal dan filter tetap sama...
     private fun getStartOfDay(date: Date, cal: Calendar): Date {
         cal.time = date
         cal.set(Calendar.HOUR_OF_DAY, 0)
@@ -495,9 +495,6 @@ class HomeViewModel @Inject constructor(
         return getEndOfDay(cal.time, cal)
     }
 
-    // Fungsi filterTransactions, onDialogDismissed, onDialogConfirmed, setDateFilter, dll.
-    // tidak saya sertakan lagi di sini karena tidak ada perubahan langsung untuk SavedStateHandle.
-    // Pastikan mereka ada di file asli Anda.
     private fun filterTransactions(
         rawTransactions: List<Transaction>,
         filterType: DateFilterType,
@@ -518,7 +515,6 @@ class HomeViewModel @Inject constructor(
                 Log.d("HomeViewModel", "Condition for first time user (for this BU) met. Setting showAddFirstTransactionDialog to true.")
                 viewModelScope.launch { _showAddFirstTransactionDialog.emit(true) }
             }
-            // Tetap return Empty agar UI konsisten jika dialog first transaction muncul.
             return TransactionListUiState.Empty
         }
 
@@ -548,7 +544,7 @@ class HomeViewModel @Inject constructor(
                     val customEndDate = Date(endDateMillis)
                     rawTransactions.filter { it.date in customStartDate..customEndDate }
                 } else {
-                    rawTransactions // Jika custom range tidak valid, tampilkan semua dari BU yang dipilih
+                    rawTransactions
                 }
             }
         }
@@ -558,11 +554,9 @@ class HomeViewModel @Inject constructor(
         return if (filteredList.isNotEmpty()) {
             TransactionListUiState.Success(filteredList)
         } else {
-            // Jika rawTransactions (untuk BU yang dipilih) ada isinya tapi filter tidak menghasilkan apa-apa
             if (rawTransactions.isNotEmpty()) {
                 TransactionListUiState.NoResultsForFilter
             } else {
-                // Jika rawTransactions (untuk BU yang dipilih) memang kosong
                 TransactionListUiState.Empty
             }
         }

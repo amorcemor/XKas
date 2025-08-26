@@ -10,6 +10,9 @@ val Purple40 = Color(0xFF6650a4)
 val PurpleGrey40 = Color(0xFF625b71)
 val Pink40 = Color(0xFF7D5260)
 
+val MyDarkBackgroundColor = Color(0xFF37474F)      // Ganti dengan HEX Anda
+val MyDarkBackgroundColor2 = Color(0xFF0E252D)
+
 // Warna Kustom Anda untuk Tombol
 val MyNewButtonBackgroundColor = Color(0xFF37474F)      // Ganti dengan HEX Anda
 val MyNewButtonContentColor = Color.White              // Ganti dengan HEX atau Color object Anda

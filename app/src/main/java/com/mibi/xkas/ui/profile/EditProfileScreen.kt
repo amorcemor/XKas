@@ -1,11 +1,8 @@
 package com.mibi.xkas.ui.profile
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,27 +11,29 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,40 +41,63 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
-import com.mibi.xkas.R
+import com.mibi.xkas.ui.components.AvatarDisplay
+import com.mibi.xkas.ui.components.AvatarSelectorDialog
 import com.mibi.xkas.ui.theme.XKasTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.ui.graphics.Color
+import com.mibi.xkas.ui.theme.MyNewButtonBackgroundColor
+import com.mibi.xkas.ui.theme.MyNewButtonContentColor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfileScreen(
-    viewModel: ProfileViewModel = viewModel(), // Inject ViewModel
+fun EditProfileScreen(
+    viewModel: EditProfileViewModel = viewModel(),
     onNavigateUp: () -> Unit,
-    onEditProfileClicked: () -> Unit,
-    onSettingsClicked: () -> Unit,
-    onNavigateToLogin: () -> Unit // Callback untuk navigasi setelah logout
+    onSaveSuccess: () -> Unit,
+    onAccountDeleted: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val validationState by viewModel.validationState.collectAsState()
+
+    var showAvatarSelector by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    // Show snackbar for messages
+    LaunchedEffect(uiState.errorMessage, uiState.successMessage) {
+        uiState.errorMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearMessages()
+        }
+        uiState.successMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearMessages()
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Profil Saya") },
+                title = { Text("Edit Profil") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateUp) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
                     }
                 }
             )
+        },
+        snackbarHost = {
+            SnackbarHost(hostState = snackbarHostState)
         }
     ) { paddingValues ->
         Column(
@@ -86,93 +108,218 @@ fun ProfileScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (uiState.isLoading) {
-                CircularProgressIndicator(modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(32.dp))
-            } else if (uiState.errorMessage != null) {
-                Text(
-                    text = uiState.errorMessage ?: "Terjadi kesalahan pada profil.",
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .align(Alignment.CenterHorizontally)
-                )
-                // Pertimbangkan menambahkan tombol untuk "Coba Lagi" yang memanggil viewModel.loadUserProfile()
-                // atau tombol untuk kembali/login.
-                if (uiState.errorMessage?.contains("login", ignoreCase = true) == true) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = onNavigateToLogin) {
-                        Text("Login Sekarang")
+            when {
+                uiState.isLoading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
                     }
                 }
-            } else {
-                // Foto Profil
-                Spacer(modifier = Modifier.height(24.dp))
-                if (!uiState.userProfileImageUrl.isNullOrEmpty()) {
-                    AsyncImage(
-                        model = uiState.userProfileImageUrl,
-                        contentDescription = "Foto Profil",
-                        contentScale = ContentScale.Crop,
-                        placeholder = painterResource(id = R.drawable.ic_rocket_launch), // Placeholder Anda
-                        error = painterResource(id = R.drawable.ic_rocket_launch), // Gambar jika error memuat
-                        modifier = Modifier
-                            .size(120.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                    )
-                } else {
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_rocket_launch), // Gambar default
-                        contentDescription = "Foto Profil",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(120.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                    )
+
+                uiState.errorMessage != null -> {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(32.dp)
+                    ) {
+                        Text(
+                            text = "Gagal memuat profil",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = uiState.errorMessage ?: "Terjadi kesalahan",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
 
-                // Nama Pengguna
-                Text(
-                    text = uiState.userName ?: "Nama Pengguna Tidak Tersedia",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
+                else -> {
+                    // Avatar Section
+                    AvatarSection(
+                        currentAvatar = viewModel.getCurrentAvatar(),
+                        userName = viewModel.editedName,
+                        onAvatarClicked = { showAvatarSelector = true }
+                    )
 
-                // Email Pengguna
-                Text(
-                    text = uiState.userEmail ?: "Email Tidak Tersedia",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(32.dp))
+                    Spacer(modifier = Modifier.height(32.dp))
 
-                // Item Menu Profil
-                ProfileMenuItem(
-                    icon = Icons.Default.Person,
-                    text = "Edit Profil",
-                    onClick = onEditProfileClicked
-                )
-                ProfileMenuItem(
-                    icon = Icons.Default.Settings,
-                    text = "Pengaturan Aplikasi",
-                    onClick = onSettingsClicked
-                )
+                    // Edit Form Section
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Text(
+                                text = "Informasi Profil",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(bottom = 16.dp)
+                            )
 
-                Divider(modifier = Modifier.padding(vertical = 16.dp))
+                            OutlinedTextField(
+                                value = viewModel.editedName,
+                                onValueChange = { viewModel.onNameChange(it) },
+                                label = { Text("Nama") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                shape = RoundedCornerShape(8.dp),
+                                isError = !validationState.isNameValid,
+                                enabled = !uiState.isSaving
+                            )
 
-                ProfileMenuItem(
-                    icon = Icons.AutoMirrored.Filled.ExitToApp,
-                    text = "Logout",
-                    onClick = {
-                        viewModel.logout {
-                            onNavigateToLogin() // Panggil navigasi setelah logout selesai
+                            // Show validation error for name
+                            if (!validationState.isNameValid) {
+                                Text(
+                                    text = validationState.nameErrorMessage ?: "",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            OutlinedTextField(
+                                value = viewModel.editedEmail,
+                                onValueChange = { },
+                                label = { Text("Email") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                enabled = false, // Email can't be changed
+                                shape = RoundedCornerShape(8.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "Email tidak dapat diubah",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 16.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            // Tombol simpan perubahan
+                            Button(
+                                onClick = { viewModel.saveProfile { onSaveSuccess() } },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = Color.White
+                                ),
+                                enabled = !uiState.isSaving
+                            ) {
+                                if (uiState.isSaving) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp),
+                                        color = Color.White,
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Text(
+                                        text = "Simpan Perubahan",
+                                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                }
+                            }
                         }
-                    },
-                    tint = MaterialTheme.colorScheme.error
+                    }
+
+                    Spacer(modifier = Modifier.height(52.dp))
+
+                    Button(
+                        onClick = { showDeleteDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                        modifier = Modifier
+                            .width(200.dp)
+                            .height(50.dp),
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteForever,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = Color.White
+                        )
+                        Text(
+                            text = "Hapus Akun",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Avatar Selector Dialog/BottomSheet
+        if (showAvatarSelector) {
+            AvatarSelectorDialog(
+                currentAvatarType = viewModel.getCurrentAvatar().type,
+                currentAvatarValue = viewModel.getCurrentAvatar().value,
+                currentAvatarColor = viewModel.getCurrentAvatar().color,
+                userName = viewModel.editedName,
+                onAvatarSelected = { type, value, color ->
+                    viewModel.onAvatarSelected(AvatarSelection(type, value, color ?: ""))
+                    showAvatarSelector = false
+                },
+                onDismiss = { showAvatarSelector = false }
+            )
+        }
+
+        if (showDeleteDialog) {
+            AlertDialog(
+                onDismissRequest = { showDeleteDialog = false },
+                title = { Text("Hapus Akun") },
+                text = { Text("Menghapus akun akan menghapus semua data Anda. Tindakan ini tidak dapat dibatalkan.\n\nApakah Anda yakin ingin melanjutkan?") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showDeleteDialog = false
+                            viewModel.deleteAccount { onAccountDeleted() }
+                        }
+                    ) {
+                        Text("Ya, Hapus", color = Color.Red)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteDialog = false }) {
+                        Text("Batal")
+                    }
+                }
+            )
+        }
+    }
+
+    if (uiState.isSaving) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.4f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color.White)
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Menghapus akun...",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium
                 )
             }
         }
@@ -180,82 +327,42 @@ fun ProfileScreen(
 }
 
 @Composable
-fun LoginScreen(
-    onLoginSuccess: () -> Unit, // Callback setelah login berhasil
-    onNavigateToRegister: () -> Unit // Contoh jika ada tombol register
+private fun AvatarSection(
+    currentAvatar: AvatarSelection,
+    userName: String,
+    onAvatarClicked: () -> Unit
 ) {
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    // val firebaseAuth = FirebaseAuth.getInstance() // Jika login langsung di sini
-
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Login Screen")
-        Spacer(modifier = Modifier.height(16.dp))
-        TextField(value = email, onValueChange = { email = it }, label = { Text("Email") })
-        Spacer(modifier = Modifier.height(8.dp))
-        TextField(value = password, onValueChange = { password = it }, label = { Text("Password") })
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = {
-            // TODO: Implement Firebase Login Logic here or in ViewModel
-            // Jika berhasil:
-            onLoginSuccess()
-        }) {
-            Text("Login")
-        }
-        // Button(onClick = onNavigateToRegister) { Text("Belum punya akun? Daftar") }
-    }
-}
+        AvatarDisplay(
+            avatarType = currentAvatar.type,
+            avatarValue = currentAvatar.value,
+            avatarColor = currentAvatar.color,
+            userName = userName,
+            size = 120.dp,
+            onClick = onAvatarClicked
+            // hapus showEditIcon = true
+        )
 
-@Composable
-fun ProfileMenuItem(
-    icon: ImageVector,
-    text: String,
-    onClick: () -> Unit,
-    tint: Color = LocalContentColor.current
-) {
-    TextButton(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = tint,
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                text = text,
-                style = MaterialTheme.typography.bodyLarge,
-                color = tint
-            )
-        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = "Ketuk untuk mengubah avatar",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
 @Preview(showBackground = true)
 @Composable
-fun ProfileScreenPreview() {
+fun EditProfileScreenPreview() {
     XKasTheme {
-        // Untuk Preview, ViewModel tidak akan ter-inject dengan benar tanpa setup tambahan.
-        // Preview ini akan menampilkan state loading atau error awal dari ViewModel.
-        // Anda bisa membuat ProfileViewModel palsu untuk preview jika ingin mengontrol state yang ditampilkan.
-        ProfileScreen(
+        EditProfileScreen(
             onNavigateUp = {},
-            onEditProfileClicked = {},
-            onSettingsClicked = {},
-            onNavigateToLogin = {} // Preview tidak akan benar-benar logout
+            onSaveSuccess = {},
+            onAccountDeleted = {}
         )
     }
 }

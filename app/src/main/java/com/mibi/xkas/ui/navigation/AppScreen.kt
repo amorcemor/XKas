@@ -9,9 +9,9 @@ sealed class Screen(val route: String) {
 
     // == Main Application Screens (Bottom Navigation & Core Features) ==
     object MainTransactions : Screen("main_transactions_screen") // Layar utama untuk daftar transaksi (dulu Home/Transactions)
-    object MainDebt : Screen("main_debt_screen")
-    object MainProfile : Screen("main_profile_screen")       // Layar profil pengguna
-
+    object MainDebt : Screen("contact_debt_screen")
+    object EditProfile : Screen("edit_profile_screen")       // Layar profil pengguna
+    object Settings : Screen("settings_screen")
 
 
     // == Feature-Specific Screens (Diakses dari layar utama atau lainnya) ==
@@ -28,19 +28,14 @@ sealed class Screen(val route: String) {
         const val ARG_TRANSACTION_ID = "transactionId"
         const val ARG_BUSINESS_UNIT_ID = "businessUnitId"
 
-        // Membuat route untuk MENAMBAH transaksi BARU
-        // Memerlukan businessUnitId.
         fun createRouteForNew(businessUnitId: String): String {
             return "add_edit_transaction_screen?$ARG_BUSINESS_UNIT_ID=$businessUnitId"
         }
 
-        // Membuat route untuk MENGEDIT transaksi LAMA
-        // Memerulkan transactionId. businessUnitId bisa opsional diteruskan jika diperlukan.
         fun createRouteForEdit(transactionId: String): String {
             return "add_edit_transaction_screen?$ARG_TRANSACTION_ID=$transactionId"
         }
 
-        // Opsional: Membuat route untuk MENGEDIT dengan businessUnitId (jika BU bisa diubah atau perlu eksplisit)
         fun createRouteForEditWithBu(transactionId: String, businessUnitId: String): String {
             return "add_edit_transaction_screen?$ARG_TRANSACTION_ID=$transactionId&$ARG_BUSINESS_UNIT_ID=$businessUnitId"
         }
@@ -52,7 +47,6 @@ sealed class Screen(val route: String) {
      */
     object TransactionDetail : Screen("transaction_detail_screen/{transactionId}") {
         const val ARG_TRANSACTION_ID = "transactionId"
-
         fun createRoute(transactionId: String) = "transaction_detail_screen/$transactionId"
     }
 
@@ -61,12 +55,25 @@ sealed class Screen(val route: String) {
      */
     object AddEditBusinessUnit : Screen("add_edit_business_unit_screen")
 
-    // == Lainnya (Contoh) ==
-    // object Settings : Screen("settings_screen")
-
     object DebtDetail : Screen("debt_detail_screen/{debtId}") {
         const val ARG_DEBT_ID = "debtId"
-
         fun createRoute(debtId: String) = "debt_detail_screen/$debtId"
     }
+
+    object ContactDebtDetail : Screen("contact_debt_detail_screen/{contactId}") {
+        const val ARG_CONTACT_ID = "contactId"
+        fun createRoute(contactId: String) = "contact_debt_detail_screen/$contactId"
+    }
+
+    object AddContact : Screen("add_contact_screen")
+
+    object AddManualDebt : Screen("add_manual_debt_screen/{contactId}") {
+        const val ARG_CONTACT_ID = "contactId"
+        fun createRoute(contactId: String) = "add_manual_debt_screen/$contactId"
+    }
+
+    object AddManualDebtDetail : Screen("add_manual_debt_detail_screen/{debtId}") {
+        const val ARG_DEBT_ID = "debtId"
+    }
+
 }

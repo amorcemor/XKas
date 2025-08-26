@@ -1,4 +1,4 @@
-package com.mibi.xkas.ui.auth.register // Sesuaikan dengan package Anda
+package com.mibi.xkas.ui.auth.register
 
 import android.util.Patterns
 import androidx.compose.runtime.getValue
@@ -14,6 +14,8 @@ import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.auth.ktx.auth
 import com.google.firebase.ktx.Firebase
+import com.mibi.xkas.data.repository.UserRepository
+import com.mibi.xkas.utils.AvatarUtils
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
@@ -25,11 +27,13 @@ sealed class RegisterResultState {
     data class Error(val message: String) : RegisterResultState()
 }
 
-class RegisterViewModel : ViewModel() {
+class RegisterViewModel(
+    private val userRepository: UserRepository = UserRepository()
+) : ViewModel() {
 
     private val auth: FirebaseAuth = Firebase.auth
 
-    var name by mutableStateOf("") // Tambahkan state untuk nama
+    var name by mutableStateOf("")
     var email by mutableStateOf("")
     var password by mutableStateOf("")
     var confirmPassword by mutableStateOf("")
@@ -37,7 +41,7 @@ class RegisterViewModel : ViewModel() {
     var registerResultState by mutableStateOf<RegisterResultState>(RegisterResultState.Idle)
         private set
 
-    fun onNameChange(newName: String) { // Tambahkan fungsi untuk nama
+    fun onNameChange(newName: String) {
         name = newName
         resetErrorStateIfNeeded()
     }
@@ -64,7 +68,8 @@ class RegisterViewModel : ViewModel() {
     }
 
     fun registerUser() {
-        if (name.isBlank()) { // Validasi nama
+        // Validasi input
+        if (name.isBlank()) {
             registerResultState = RegisterResultState.Error("Nama lengkap harus diisi.")
             return
         }
@@ -88,22 +93,48 @@ class RegisterViewModel : ViewModel() {
         registerResultState = RegisterResultState.Loading
         viewModelScope.launch {
             try {
+                // Step 1: Create Firebase Auth account
                 val authResult = auth.createUserWithEmailAndPassword(email.trim(), password.trim()).await()
-                authResult.user?.let { firebaseUser ->
-                    // Set display name untuk pengguna baru
+                val firebaseUser = authResult.user
+
+                if (firebaseUser != null) {
+                    // Step 2: Update Firebase Auth profile with display name
                     val userProfileChangeRequest = UserProfileChangeRequest.Builder()
                         .setDisplayName(name.trim())
                         .build()
-                    firebaseUser.updateProfile(userProfileChangeRequest).await() // Tunggu sampai update profile selesai
+                    firebaseUser.updateProfile(userProfileChangeRequest).await()
 
-                    registerResultState = RegisterResultState.Success(firebaseUser)
-                } ?: run {
+                    // Step 3: Generate default avatar
+                    val defaultAvatar = AvatarUtils.generateInitialAvatar(name.trim())
+
+                    // Step 4: Save user data to Firestore with avatar
+                    val firestoreResult = userRepository.createUserProfile(
+                        userId = firebaseUser.uid,
+                        displayName = name.trim(),
+                        email = email.trim(),
+                        avatarType = defaultAvatar.type,
+                        avatarValue = defaultAvatar.value,
+                        avatarColor = defaultAvatar.color
+                    )
+
+                    if (firestoreResult.isSuccess) {
+                        registerResultState = RegisterResultState.Success(firebaseUser)
+                    } else {
+                        // If Firestore save fails, we still have the Firebase Auth account
+                        // but we should inform the user
+                        val firestoreError = firestoreResult.exceptionOrNull()
+                        registerResultState = RegisterResultState.Error(
+                            "Akun berhasil dibuat, tetapi gagal menyimpan data profil: ${firestoreError?.message ?: "Unknown error"}"
+                        )
+                    }
+                } else {
                     registerResultState = RegisterResultState.Error("Gagal membuat akun, pengguna tidak valid.")
                 }
+
             } catch (e: Exception) {
                 val errorMessage = when (e) {
                     is FirebaseAuthWeakPasswordException -> "Password terlalu lemah."
-                    is FirebaseAuthInvalidCredentialsException -> "Format email tidak valid atau password salah." // Bisa juga email
+                    is FirebaseAuthInvalidCredentialsException -> "Format email tidak valid atau password salah."
                     is FirebaseAuthUserCollisionException -> "Email sudah terdaftar. Silakan gunakan email lain atau login."
                     else -> "Gagal registrasi: ${e.localizedMessage ?: "Terjadi kesalahan tidak diketahui."}"
                 }

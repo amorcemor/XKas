@@ -3,27 +3,32 @@ package com.mibi.xkas.ui.profile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
+import com.mibi.xkas.data.repository.UserRepository
+import com.mibi.xkas.utils.AvatarUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-// Data class untuk merepresentasikan state UI profil
-data class UserProfileUiState(
+// State untuk UI profile
+data class ProfileUiState(
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
     val userName: String? = null,
     val userEmail: String? = null,
-    val userProfileImageUrl: String? = null,
-    val isLoading: Boolean = true,
-    val errorMessage: String? = null
+    val userAvatarType: String = "initial",
+    val userAvatarValue: String = "",
+    val userAvatarColor: String = ""
 )
 
-class ProfileViewModel : ViewModel() {
+class ProfileViewModel(
+    private val userRepository: UserRepository = UserRepository()
+) : ViewModel() {
 
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+    private val auth = FirebaseAuth.getInstance()
 
-    private val _uiState = MutableStateFlow(UserProfileUiState())
-    val uiState: StateFlow<UserProfileUiState> = _uiState.asStateFlow()
+    private val _uiState = MutableStateFlow(ProfileUiState())
+    val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
 
     init {
         loadUserProfile()
@@ -31,30 +36,62 @@ class ProfileViewModel : ViewModel() {
 
     fun loadUserProfile() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null) // Reset error message
-            val currentUser: FirebaseUser? = auth.currentUser
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+
+            val currentUser = auth.currentUser
             if (currentUser != null) {
-                _uiState.value = UserProfileUiState(
-                    userName = currentUser.displayName,
-                    userEmail = currentUser.email,
-                    userProfileImageUrl = currentUser.photoUrl?.toString(),
-                    isLoading = false
-                )
+                try {
+                    // Get user data from Firestore
+                    val result = userRepository.getUserProfile(currentUser.uid)
+
+                    if (result.isSuccess) {
+                        val user = result.getOrNull()
+                        if (user != null) {
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                userName = user.displayName,
+                                userEmail = user.email,
+                                userAvatarType = user.avatarType,
+                                userAvatarValue = user.avatarValue,
+                                userAvatarColor = user.avatarColor
+                            )
+                        } else {
+                            // Fallback to Firebase Auth data with default avatar
+                            val defaultAvatar = AvatarUtils.generateInitialAvatar(
+                                currentUser.displayName ?: currentUser.email ?: "User"
+                            )
+
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                userName = currentUser.displayName,
+                                userEmail = currentUser.email,
+                                userAvatarType = defaultAvatar.type,
+                                userAvatarValue = defaultAvatar.value,
+                                userAvatarColor = defaultAvatar.color
+                            )
+                        }
+                    } else {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            errorMessage = "Gagal memuat profil: ${result.exceptionOrNull()?.message}"
+                        )
+                    }
+                } catch (e: Exception) {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = "Terjadi kesalahan: ${e.message}"
+                    )
+                }
             } else {
-                // Ini bisa terjadi jika pengguna tidak login atau sesi telah berakhir
-                _uiState.value = UserProfileUiState(
+                _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    errorMessage = "Pengguna tidak login. Silakan login terlebih dahulu."
+                    errorMessage = "User tidak login"
                 )
             }
         }
     }
 
-    fun logout(onComplete: () -> Unit) {
-        auth.signOut()
-        // Setelah sign out, currentUser akan menjadi null.
-        // Anda mungkin ingin mengosongkan UI state atau menavigasi.
-        _uiState.value = UserProfileUiState(isLoading = false, errorMessage = "Anda telah logout.") // Contoh update state
-        onComplete() // Panggil callback untuk navigasi
+    fun refreshProfile() {
+        loadUserProfile()
     }
 }

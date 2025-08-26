@@ -3,8 +3,10 @@ package com.mibi.xkas.ui
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -14,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FabPosition
 import androidx.compose.material3.FloatingActionButton
@@ -25,10 +28,12 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
@@ -43,6 +48,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -50,7 +56,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
-import com.mibi.xkas.ui.addedit.AddEditBusinessUnitScreen
 import com.mibi.xkas.ui.addedit.AddEditTransactionScreen
 import com.mibi.xkas.ui.auth.WelcomeScreen
 import com.mibi.xkas.ui.auth.login.LoginScreen
@@ -58,8 +63,16 @@ import com.mibi.xkas.ui.auth.register.RegisterScreen
 import com.mibi.xkas.ui.detail.TransactionDetailScreen
 import com.mibi.xkas.ui.home.MainHomeScreen
 import com.mibi.xkas.ui.navigation.Screen
-import com.mibi.xkas.ui.profile.ProfileScreen
+import com.mibi.xkas.ui.profile.EditProfileScreen
 import kotlin.math.atan2
+import coil.compose.AsyncImage
+import com.mibi.xkas.ui.debt.EnhancedContactDebtDetailScreen
+import com.mibi.xkas.ui.debt.EnhancedContactDebtScreen
+import com.mibi.xkas.ui.home.HomeViewModel
+import com.mibi.xkas.ui.profile.EditProfileScreen
+import com.mibi.xkas.ui.bottomNavItems
+import com.google.firebase.auth.FirebaseAuth
+import com.mibi.xkas.ui.settings.SettingsScreen
 
 
 const val MAIN_APP_SCAFFOLD_TAG = "MainAppScaffold"
@@ -221,24 +234,51 @@ class BottomAppBarCutoutShape(
 @Composable
 fun MainAppScaffold(
     navController: NavHostController,
-    startDestinationOuter: String
+    startDestinationOuter: String,
+    isUserLoggedIn: Boolean = true
 ) {
+    val homeViewModel: HomeViewModel = hiltViewModel()
+
+    // ✅ TAMBAHKAN INI: Listen perubahan auth state untuk redirect
+    LaunchedEffect(isUserLoggedIn) {
+        val currentRoute = navController.currentBackStackEntry?.destination?.route
+
+        if (!isUserLoggedIn && currentRoute != Screen.Login.route &&
+            currentRoute != Screen.Register.route && currentRoute != Screen.Welcome.route) {
+            // User logout, redirect ke login
+            navController.navigate(Screen.Login.route) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        } else if (isUserLoggedIn && (currentRoute == Screen.Login.route ||
+                    currentRoute == Screen.Register.route)) {
+            // User login, redirect ke main screen
+            navController.navigate(Screen.MainTransactions.route) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
     val density = LocalDensity.current
     val fabSizePx = with(density) { FAB_SIZE.toPx() }
     val cornerRadiusPx = with(density) { ROUNDED_CORNER_RADIUS.toPx() }
     val cutoutOffsetYPx = with(density) { CUTOUT_OFFSET_Y.toPx() }
 
-    val bottomAppBarShape =
-        remember(fabSizePx, cornerRadiusPx, cutoutOffsetYPx) {
-            BottomAppBarCutoutShape(fabSizePx, cornerRadiusPx, cutoutOffsetYPx)
-        }
+    val bottomAppBarShape = remember(fabSizePx, cornerRadiusPx, cutoutOffsetYPx) {
+        BottomAppBarCutoutShape(fabSizePx, cornerRadiusPx, cutoutOffsetYPx)
+    }
 
     val noBottomBarRoutes = listOf(
         Screen.Login.route,
         Screen.Register.route,
         Screen.Welcome.route,
-        Screen.AddEditBusinessUnit.route, // Tambahkan layar Add/Edit BU
-        Screen.AddEditTransaction.route // AddEditTransaction juga tidak butuh bottom bar
+        Screen.AddEditBusinessUnit.route,
+        Screen.AddEditTransaction.route,
+        Screen.AddContact.route,
+        Screen.AddManualDebt.route.replace("/{contactId}", "/"),
+        Screen.EditProfile.route,
+        Screen.Settings.route
     )
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -247,14 +287,21 @@ fun MainAppScaffold(
         currentRoute?.startsWith(noBarRoute.split("?")[0]) == true
     }
 
-    // --- PERUBAHAN 1: State untuk menampung aksi FAB ---
     var fabOnClick by remember { mutableStateOf<() -> Unit>({}) }
+
+    // ✅ TAMBAHKAN LOADING STATE SAAT AUTH BELUM DETERMINED
+    if (!isUserLoggedIn && startDestinationOuter == Screen.MainTransactions.route) {
+        // Show loading atau redirect ke login
+        Box(modifier = Modifier.fillMaxSize()) {
+            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+        }
+        return
+    }
 
     Scaffold(
         floatingActionButton = {
             if (showBottomBarAndFab) {
                 FloatingActionButton(
-                    // --- PERUBAHAN 2: Gunakan state sebagai aksi onClick ---
                     onClick = fabOnClick,
                     shape = CircleShape,
                     containerColor = Color(0xFFFFC727),
@@ -286,10 +333,8 @@ fun MainAppScaffold(
                         containerColor = Color.Transparent,
                         tonalElevation = 0.dp
                     ) {
-                        // ... (Logika NavigationBarItem tetap sama) ...
                         val items = bottomNavItems
                         val itemsCount = items.size
-
                         val itemColors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.primary,
                             unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -299,7 +344,6 @@ fun MainAppScaffold(
                         )
 
                         if (itemsCount == 2) {
-                            // Item Pertama (Kiri)
                             val screen1 = items[0]
                             val isSelected1 = currentRoute?.startsWith(screen1.route) == true
                             NavigationBarItem(
@@ -309,10 +353,7 @@ fun MainAppScaffold(
                                 onClick = { navigateToBottomNavItem(navController, screen1.route) },
                                 colors = itemColors
                             )
-
-                            Spacer(Modifier.weight(1f)) // Spacer untuk FAB
-
-                            // Item Kedua (Kanan)
+                            Spacer(Modifier.weight(1f))
                             val screen2 = items[1]
                             val isSelected2 = currentRoute?.startsWith(screen2.route) == true
                             NavigationBarItem(
@@ -322,20 +363,6 @@ fun MainAppScaffold(
                                 onClick = { navigateToBottomNavItem(navController, screen2.route) },
                                 colors = itemColors
                             )
-                        } else {
-                            Log.w(MAIN_APP_SCAFFOLD_TAG, "Layout bottom bar saat ini hanya optimal untuk 2 item.")
-                            // Fallback jika item bukan 2
-                            items.forEach { screen ->
-                                val isSelected = currentRoute?.startsWith(screen.route) == true
-                                NavigationBarItem(
-                                    modifier = Modifier.weight(1f),
-                                    icon = { Icon(screen.icon, contentDescription = screen.label) },
-                                    label = { Text(screen.label) },
-                                    selected = isSelected,
-                                    onClick = { navigateToBottomNavItem(navController, screen.route) },
-                                    colors = itemColors
-                                )
-                            }
                         }
                     }
                 }
@@ -347,7 +374,6 @@ fun MainAppScaffold(
             startDestination = startDestinationOuter,
             modifier = Modifier.padding(innerPadding)
         ) {
-            // --- GRUP OTENTIKASI --- (Tetap sama)
             composable(Screen.Login.route) {
                 LoginScreen(
                     onLoginSuccess = {
@@ -381,49 +407,61 @@ fun MainAppScaffold(
                 )
             }
 
-            // --- GRUP APLIKASI UTAMA ---
             composable(Screen.MainTransactions.route) {
                 MainHomeScreen(
                     navController = navController,
-                    onFabActionReady = { action ->
-                        // Logika ini dari saran sebelumnya, sudah benar
-                         fabOnClick = action
-                    }
+                    homeViewModel = homeViewModel,
+                    onFabActionReady = { action -> fabOnClick = action }
                 )
             }
 
             composable(Screen.MainDebt.route) {
-                com.mibi.xkas.ui.debt.DebtScreen(
-                    onDebtClick = { debtId ->
-                        navController.navigate(Screen.DebtDetail.createRoute(debtId))
+                EnhancedContactDebtScreen(
+                    onContactClick = { contactId ->
+                        navController.navigate(Screen.ContactDebtDetail.createRoute(contactId))
+                    },
+                    onFabActionReady = { action -> fabOnClick = action }
+                )
+            }
+
+
+            composable(Screen.ContactDebtDetail.route) { backStackEntry ->
+                val contactId =
+                    backStackEntry.arguments?.getString(Screen.ContactDebtDetail.ARG_CONTACT_ID)
+                        ?: ""
+                EnhancedContactDebtDetailScreen(
+                    contactId = contactId,
+                    onBack = { navController.popBackStack() },
+                    onEditDebt = { debtId ->
+                        navController.navigate("edit_debt_screen/$debtId")
+                    },
+                    onDeleteDebt = { debtId ->
+                        // bisa tampilkan konfirmasi atau aksi lain
+                    },
+                    onFabActionReady = { action -> fabOnClick = action }
+                )
+            }
+
+
+            composable(Screen.EditProfile.route) {
+                EditProfileScreen(
+                    onNavigateUp = { navController.popBackStack() },
+                    onSaveSuccess = { navController.popBackStack() },
+                    onAccountDeleted = {
+                        navController.navigate(Screen.Login.route) {
+                            popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                        }
                     }
                 )
             }
 
 
-            composable(Screen.MainProfile.route) {
-                Log.d(MAIN_APP_SCAFFOLD_TAG, "NavHost: Menampilkan ProfileScreen")
-                // fabOnClick = {} // Reset aksi FAB di layar profil
-
-                ProfileScreen (
-                    onNavigateToLogin = {
-                        Log.d(MAIN_APP_SCAFFOLD_TAG, "Logout dari Profil, navigasi ke Login")
-                        navController.navigate(Screen.Login.route) {
-                            popUpTo(navController.graph.id) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    },
-                    // --- PERBAIKAN: Tambahkan parameter yang dibutuhkan di sini ---
-                    onEditProfileClicked = { Log.d(MAIN_APP_SCAFFOLD_TAG, "Tombol Edit Profil diklik") },
-                    onNavigateUp = {
-                        Log.d(MAIN_APP_SCAFFOLD_TAG, "Navigasi kembali dari Profil")
-                        navController.popBackStack()
-                    },
-                    onSettingsClicked = { Log.d(MAIN_APP_SCAFFOLD_TAG, "Tombol Pengaturan diklik") }
+            composable(Screen.Settings.route) {
+                SettingsScreen(
+                    onBackClick = { navController.popBackStack() }
                 )
             }
 
-            // --- GRUP LAYAR FITUR --- (Route AddEditTransaction & lainnya tetap sama)
             composable(
                 route = Screen.AddEditTransaction.route,
                 arguments = listOf(
@@ -452,35 +490,17 @@ fun MainAppScaffold(
                 TransactionDetailScreen(navController = navController)
             }
 
-            composable(Screen.AddEditBusinessUnit.route) {
-                AddEditBusinessUnitScreen(
-                    navController = navController,
-                )
-            }
-
-            composable(
-                route = Screen.DebtDetail.route,
-                arguments = listOf(navArgument(Screen.DebtDetail.ARG_DEBT_ID) {
-                    type = NavType.StringType
-                })
-            ) {
-                val debtId = it.arguments?.getString(Screen.DebtDetail.ARG_DEBT_ID) ?: ""
-                com.mibi.xkas.ui.debt.DebtDetailScreen(
-                    debtId = debtId,
-                    onBack = { navController.popBackStack() } // ← ini akan kembali ke screen sebelumnya
-                )
+            composable("edit_debt_screen/{debtId}") { backStackEntry ->
+                val debtId = backStackEntry.arguments?.getString("debtId") ?: ""
+                // TODO: Tambahkan EditDebtScreen jika tersedia
             }
         }
     }
 }
 
 private fun navigateToBottomNavItem(navController: NavHostController, route: String) {
-    // ... (Fungsi ini tetap sama)
     navController.navigate(route) {
-        popUpTo(navController.graph.findStartDestination().id) {
-            saveState = true
-        }
+        popUpTo(0) { inclusive = true } // buang semua layar di back stack
         launchSingleTop = true
-        restoreState = true
     }
 }

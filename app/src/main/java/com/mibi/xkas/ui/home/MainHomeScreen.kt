@@ -61,27 +61,38 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import com.mibi.xkas.R
 import com.mibi.xkas.data.InterpretedDomainType
 import com.mibi.xkas.data.Transaction
 import com.mibi.xkas.ui.components.BusinessUnitSelectionDialog
+import com.mibi.xkas.ui.components.AvatarDisplay
 import com.mibi.xkas.ui.navigation.Screen
+import com.mibi.xkas.ui.profile.ProfileBottomSheet
+import com.mibi.xkas.ui.profile.ProfileViewModel
 import com.mibi.xkas.ui.theme.XKasTheme
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import androidx.compose.runtime.LaunchedEffect // Pastikan ini di-import
 import android.widget.Toast // Untuk pesan jika BU belum dipilih
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.filled.TrendingDown
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext // Untuk Toast
 import androidx.compose.ui.text.style.TextOverflow
 import coil.compose.AsyncImage
@@ -99,22 +110,39 @@ fun MainHomeScreen(
     onFabActionReady: (action: () -> Unit) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val currentUser = remember { FirebaseAuth.getInstance().currentUser }
-    val userDisplayName = currentUser?.displayName ?: currentUser?.email?.substringBefore("@") ?: "User"
-    val userPhotoUrl = currentUser?.photoUrl?.toString()
+    // --- TAMBAH ProfileViewModel ---
+    val profileViewModel: ProfileViewModel = viewModel()
+    val profileUiState by profileViewModel.uiState.collectAsStateWithLifecycle()
+
+    // State untuk ProfileBottomSheet
+    var showProfileBottomSheet by remember { mutableStateOf(false) }
+
+    // --- Load profile data sekali saat komposisi awal ---
+    LaunchedEffect(Unit) {
+        profileViewModel.refreshProfile()
+    }
+
     // --- PANGGIL SEKALI SAAT KOMPOSISI AWAL ---
     LaunchedEffect(key1 = Unit) {
-        if (businessUnitUiState !is HomeViewModel.BusinessUnitUiState.Success) {
+        val previousRoute = navController.previousBackStackEntry?.destination?.route
+        val isFromNavigation = previousRoute != null &&
+                previousRoute !in listOf("login", "register", "welcome")
+
+        if (isFromNavigation) {
+            homeViewModel.onNavigatedFromOtherMenu()
+        } else {
             homeViewModel.triggerInitialBusinessUnitCheck()
         }
     }
+
+    val isCreatingBusinessUnit by homeViewModel.isCreatingBusinessUnit.collectAsStateWithLifecycle()
 
     // --- State BusinessUnit ---
     val businessUnitUiState by homeViewModel.businessUnitUiState.collectAsStateWithLifecycle()
     val selectedBusinessUnit by homeViewModel.selectedBusinessUnit.collectAsStateWithLifecycle()
     val showBusinessUnitSelectionDialog by homeViewModel.showBusinessUnitSelectionDialog.collectAsStateWithLifecycle()
 
-    val currentFilterType by homeViewModel.currentDateFilterType.collectAsStateWithLifecycle() // Cukup satu deklarasi
+    val currentFilterType by homeViewModel.currentDateFilterType.collectAsStateWithLifecycle()
     val selectedStartDateMillis by homeViewModel.selectedStartDate.collectAsStateWithLifecycle()
     val selectedEndDateMillis by homeViewModel.selectedEndDate.collectAsStateWithLifecycle()
     val showNewUserDialog by homeViewModel.showAddFirstTransactionDialog.collectAsStateWithLifecycle()
@@ -149,17 +177,6 @@ fun MainHomeScreen(
             }
         }
     }
-
-    // --- Dialog Transaksi Pertama ---
-//    if (showNewUserDialog) {
-//        AddFirstTransactionDialog(
-//            onDismissRequest = { homeViewModel.onDialogDismissed() },
-//            onConfirm = {
-//                homeViewModel.onDialogConfirmed()
-//                navController.navigate(SecondaryAppDestinations.ADD_TRANSACTION_ROUTE)
-//            }
-//        )
-//    }
 
     // --- Dialog Filter Tanggal ---
     if (showFilterDialog) {
@@ -206,7 +223,7 @@ fun MainHomeScreen(
         }
     }
 
-    // --- BARU: Dialog Pemilihan Unit Bisnis ---
+    // --- Dialog Pemilihan Unit Bisnis ---
     if (showBusinessUnitSelectionDialog) {
         BusinessUnitSelectionDialog(
             businessUnitUiState = businessUnitUiState,
@@ -216,35 +233,54 @@ fun MainHomeScreen(
                 homeViewModel.setSelectedBusinessUnit(bu)
                 homeViewModel.onBusinessUnitDialogDismiss()
             },
-            onAddBusinessUnitClicked = { // <--- UBAH NAMA PARAMETER INI
-                homeViewModel.onBusinessUnitDialogDismiss() // Tutup dialog sebelum navigasi
-                navController.navigate(Screen.AddEditBusinessUnit.route) // Ganti dengan rute Anda
+            onAddBusinessUnitClicked = {
+                homeViewModel.onBusinessUnitDialogDismiss()
+                navController.navigate(Screen.AddEditBusinessUnit.route)
+            },
+            onCreateBusinessUnit = { name, type, description, initialBalance, customTypeName ->
+                homeViewModel.createBusinessUnit(name, type, description, initialBalance, customTypeName)
             },
             onDeleteBusinessUnitConfirmed = { businessUnitId ->
-                // Panggil fungsi di ViewModel Anda untuk menghapus BU
                 homeViewModel.deleteBusinessUnit(businessUnitId)
-                // ViewModel Anda juga harus menangani logika jika BU yang dihapus adalah yang sedang dipilih
             },
-            onUpdateBusinessUnitNameConfirmed = { businessUnitId, newName ->
-                homeViewModel.updateBusinessUnitName(businessUnitId, newName)
+            onUpdateBusinessUnitConfirmed = { businessUnitId, newName, newDescription, newType, customTypeName ->
+                homeViewModel.updateBusinessUnit(businessUnitId, newName, newDescription, newType, customTypeName)
+            },
+            isCreatingBusinessUnit = isCreatingBusinessUnit
+        )
+    }
+
+    // --- ProfileBottomSheet ---
+    if (showProfileBottomSheet) {
+        ProfileBottomSheet(
+            onDismiss = { showProfileBottomSheet = false },
+            onEditProfileClicked = {
+                navController.navigate(Screen.EditProfile.route)
+            },
+            onSettingsClicked = {
+                showProfileBottomSheet = false
+                navController.navigate(Screen.Settings.route)
+            },
+            onLogoutConfirmed = {
+                FirebaseAuth.getInstance().signOut()
+                navController.navigate(Screen.Login.route) {
+                    popUpTo(navController.graph.startDestinationId) {
+                        inclusive = true
+                    }
+                }
             }
         )
     }
 
-    val context = LocalContext.current // Dapatkan context untuk Toast
+    val context = LocalContext.current
 
-    // --- PERUBAHAN 2: Konfigurasikan aksi FAB menggunakan LaunchedEffect ---
     LaunchedEffect(selectedBusinessUnit) {
         onFabActionReady {
             val buId = selectedBusinessUnit?.businessUnitId
             if (!buId.isNullOrBlank()) {
-                // Jika BU sudah dipilih, navigasi ke layar tambah transaksi dengan ID BU
                 navController.navigate(Screen.AddEditTransaction.createRouteForNew(buId))
             } else {
-                // Jika belum ada BU yang dipilih, beri tahu pengguna
-                Toast.makeText(context, "Silakan pilih Unit Bisnis terlebih dahulu", Toast.LENGTH_SHORT).show()
-                // Secara opsional, bisa juga langsung membuka dialog pemilihan BU
-                // homeViewModel.onTopBarBusinessUnitClicked()
+                Toast.makeText(context, "Silahkan pilih Bisnis terlebih dahulu", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -253,15 +289,14 @@ fun MainHomeScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    // --- MODIFIKASI: Business Unit Selector di TopAppBar ---
                     Box(modifier = Modifier
                         .fillMaxWidth()
-                        .padding(end = 16.dp) // Beri padding agar tidak terlalu mepet ke filter
+                        .padding(end = 16.dp)
                         .clickable(
                             onClick = { homeViewModel.onTopBarBusinessUnitClicked() },
-                            enabled = businessUnitUiState !is HomeViewModel.BusinessUnitUiState.Loading // Nonaktifkan klik saat loading BU
+                            enabled = businessUnitUiState !is HomeViewModel.BusinessUnitUiState.Loading
                         )
-                        .padding(vertical = 8.dp) // Padding untuk area klik yang lebih baik
+                        .padding(vertical = 8.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -280,12 +315,11 @@ fun MainHomeScreen(
                                 is HomeViewModel.BusinessUnitUiState.Success -> {
                                     Text(
                                         text = selectedBusinessUnit?.name ?: "Pilih Bisnis",
-                                        style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp), // Sesuaikan ukuran font
+                                        style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp),
                                         fontWeight = FontWeight.SemiBold,
                                         color = topAppBarContentColor,
                                         maxLines = 1
                                     )
-                                    // Tampilkan ikon dropdown hanya jika ada lebih dari satu BU atau tidak ada BU (untuk memicu dialog)
                                     if (buState.businessUnit.size > 1 || buState.businessUnit.isEmpty() || selectedBusinessUnit == null) {
                                         Icon(
                                             imageVector = Icons.Filled.ArrowDropDown,
@@ -297,14 +331,14 @@ fun MainHomeScreen(
                                 }
                                 is HomeViewModel.BusinessUnitUiState.Empty -> {
                                     Text(
-                                        text = "Tambah Unit Bisnis",
+                                        text = "Tambah Bisnis",
                                         style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp),
                                         fontWeight = FontWeight.SemiBold,
                                         color = topAppBarContentColor
                                     )
                                     Icon(
                                         imageVector = Icons.Filled.ArrowDropDown,
-                                        contentDescription = "Tambah Unit Bisnis",
+                                        contentDescription = "Tambah Bisnis",
                                         tint = topAppBarContentColor,
                                         modifier = Modifier.padding(start = 4.dp)
                                     )
@@ -350,7 +384,7 @@ fun MainHomeScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent, // Atau MaterialTheme.colorScheme.surface jika ingin ada latar belakang
+                    containerColor = Color.Transparent,
                     titleContentColor = topAppBarContentColor,
                     actionIconContentColor = topAppBarContentColor
                 ),
@@ -369,7 +403,6 @@ fun MainHomeScreen(
                 }
             }
             is TransactionListUiState.Success -> {
-                // ... (logika perhitungan totalSales, totalCost, profit tetap sama) ...
                 val totalSales: Double = state.transactions.sumOf { transaction ->
                     when (transaction.interpretedType) {
                         InterpretedDomainType.SALE_WITH_COST -> transaction.sellingPrice ?: 0.0
@@ -391,6 +424,7 @@ fun MainHomeScreen(
                     DateFilterType.CUSTOM_RANGE -> if (selectedStartDateMillis != null) Date(selectedStartDateMillis!!) else Date()
                     DateFilterType.ALL_TIME -> if (state.transactions.isNotEmpty()) state.transactions.first().date else Date()
                 }
+
                 TransactionContent(
                     navController = navController,
                     profit = profit,
@@ -399,8 +433,12 @@ fun MainHomeScreen(
                     transactions = state.transactions,
                     currentFilterTypeForProfitCard = currentFilterType,
                     referenceDateForProfitCard = referenceDateForProfitCard,
-                    userDisplayName = userDisplayName, // Parameter baru
-                    userPhotoUrl = userPhotoUrl, // Parameter baru
+                    // --- GANTI PARAMETER PROFIL ---
+                    userName = profileUiState.userName,
+                    userAvatarType = profileUiState.userAvatarType,
+                    userAvatarValue = profileUiState.userAvatarValue,
+                    userAvatarColor = profileUiState.userAvatarColor,
+                    onProfileClick = { showProfileBottomSheet = true },
                     modifier = Modifier.padding(innerPadding)
                 )
             }
@@ -413,7 +451,7 @@ fun MainHomeScreen(
                         modifier = Modifier.padding(horizontal = 32.dp)
                     ) {
                         Image(
-                            painter = painterResource(id = R.drawable.profit_card_background_decoration), // Ganti dengan ID drawable Anda
+                            painter = painterResource(id = R.drawable.profit_card_background_decoration),
                             contentDescription = "Tidak ada data",
                             modifier = Modifier.size(180.dp)
                         )
@@ -430,8 +468,6 @@ fun MainHomeScreen(
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        // Tombol untuk menambah transaksi bisa juga diletakkan di sini
-                        // jika dialog pengguna baru tidak muncul atau ditolak
                         Spacer(Modifier.height(16.dp))
                         Text(
                             "Klik tombol dibawah untuk menambah transaksi pertamamu",
@@ -442,8 +478,7 @@ fun MainHomeScreen(
                     }
                 }
             }
-            is TransactionListUiState.FirstTimeEmpty -> { // State ini mungkin bisa digabung dengan Empty
-                // Atau tampilkan UI khusus jika dialog first time ditolak
+            is TransactionListUiState.FirstTimeEmpty -> {
                 Box(modifier = Modifier
                     .padding(innerPadding)
                     .fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -452,7 +487,7 @@ fun MainHomeScreen(
                         modifier = Modifier.padding(horizontal = 32.dp)
                     ) {
                         Image(
-                            painter = painterResource(id = R.drawable.ic_rocket_launch), // Ganti dengan ID drawable Anda
+                            painter = painterResource(id = R.drawable.ic_rocket_launch),
                             contentDescription = "Tidak ada data",
                             modifier = Modifier.size(180.dp)
                         )
@@ -485,7 +520,7 @@ fun MainHomeScreen(
                         modifier = Modifier.padding(horizontal = 32.dp)
                     ) {
                         Image(
-                            painter = painterResource(id = R.drawable.ic_rocket_launch), // Ganti dengan ID drawable Anda
+                            painter = painterResource(id = R.drawable.ic_cloud_search),
                             contentDescription = "Filter tidak menemukan hasil",
                             modifier = Modifier.size(180.dp)
                         )
@@ -514,9 +549,9 @@ fun MainHomeScreen(
                         modifier = Modifier.padding(horizontal = 32.dp)
                     ) {
                         Image(
-                            painter = painterResource(id = R.drawable.ic_rocket_launch), // Ganti dengan ID drawable Anda
+                            painter = painterResource(id = R.drawable.ic_business),
                             contentDescription = "Pilih Bisnis",
-                            modifier = Modifier.size(180.dp)
+                            modifier = Modifier.size(280.dp)
                         )
                         Spacer(Modifier.height(16.dp))
                         Text(
@@ -526,16 +561,14 @@ fun MainHomeScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Ketuk nama unit bisnis di atas untuk memilih atau menambah yang baru.",
+                            "Ketuk nama bisnis di atas untuk memilih atau menambah yang baru.",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        // Tambahkan tombol untuk langsung trigger dialog jika diperlukan,
-                        // meskipun klik pada TopAppBar sudah seharusnya cukup.
                         Spacer(Modifier.height(16.dp))
                         OutlinedButton(onClick = { homeViewModel.onTopBarBusinessUnitClicked() }) {
-                            Text("Pilih atau Tambah Unit Bisnis")
+                            Text("Pilih atau Tambah Bisnis")
                         }
                     }
                 }
@@ -549,7 +582,7 @@ fun MainHomeScreen(
                         modifier = Modifier.padding(horizontal = 32.dp)
                     ) {
                         Image(
-                            painter = painterResource(id = R.drawable.ic_rocket_launch), // Ganti dengan ID drawable Anda
+                            painter = painterResource(id = R.drawable.ic_rocket_launch),
                             contentDescription = "Error",
                             modifier = Modifier.size(180.dp)
                         )
@@ -564,13 +597,10 @@ fun MainHomeScreen(
                             state.message ?: "Tidak dapat memuat data. Periksa koneksi internet Anda.",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodyMedium,
-
-                            )
+                        )
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(onClick = {
-                            // Coba refresh BU dulu jika errornya mungkin terkait BU, lalu transaksi
-                            homeViewModel.triggerInitialBusinessUnitCheck() // Atau fungsi refresh BU yang lebih spesifik jika ada
-                            // homeViewModel.refreshTransactionsForCurrentBusinessUnit() // Ini akan dipanggil otomatis jika BU berhasil dipilih
+                            homeViewModel.triggerInitialBusinessUnitCheck()
                         }) {
                             Text("Coba Lagi")
                         }
@@ -581,7 +611,7 @@ fun MainHomeScreen(
     }
 }
 
-// --- BARU: Composable untuk Dialog Pengguna Baru ---
+// --- Dialog Functions (unchanged) ---
 @Composable
 fun AddFirstTransactionDialog(
     onDismissRequest: () -> Unit,
@@ -593,13 +623,13 @@ fun AddFirstTransactionDialog(
         text = { Text("Sepertinya Anda belum memiliki transaksi. Apakah Anda ingin menambahkannya sekarang?") },
         confirmButton = {
             Button(onClick = {
-                onConfirm() // Panggil lambda onConfirm
+                onConfirm()
             }) {
                 Text("Tambah Transaksi")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismissRequest) { // Panggil lambda onDismissRequest
+            TextButton(onClick = onDismissRequest) {
                 Text("Nanti Saja")
             }
         }
@@ -627,23 +657,19 @@ fun DateFilterDialog(
             }
         },
         text = {
-            LazyColumn { // Gunakan LazyColumn jika daftar bisa panjang
+            LazyColumn {
                 items(DateFilterType.values()) { filterType ->
                     val isSelected = filterType == currentSelectedType
                     val cardBackgroundColor = if (isSelected) {
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) // Warna aksen sangat tipis untuk item terpilih
-                        // Atau jika ingin tetap putih/surface tapi dengan border:
-                        // MaterialTheme.colorScheme.surface
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
                     } else {
-                        MaterialTheme.colorScheme.surface // Warna dasar card (biasanya putih di tema terang)
+                        MaterialTheme.colorScheme.surface
                     }
 
                     val textColor = if (isSelected) {
-                        MaterialTheme.colorScheme.primary // Warna teks untuk item terpilih (jika card bg berubah)
-                        // Atau tetap onSurface jika card bg tidak banyak berubah:
-                        // MaterialTheme.colorScheme.onSurface
+                        MaterialTheme.colorScheme.primary
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant // Warna teks standar untuk item tidak terpilih
+                        MaterialTheme.colorScheme.onSurfaceVariant
                     }
 
                     val iconColor = if (isSelected) {
@@ -657,17 +683,14 @@ fun DateFilterDialog(
                             .padding(vertical = 4.dp)
                             .clickable {
                                 onFilterSelected(filterType)
-                                // onDismissRequest() // Pertimbangkan untuk menutup dialog di sini atau dari MainHomeScreen
                             },
                         shape = RoundedCornerShape(8.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = cardBackgroundColor
                         ),
                         elevation = CardDefaults.cardElevation(
-                            defaultElevation = 0.dp // Hapus elevation jika ingin tampilan lebih flat
+                            defaultElevation = 0.dp
                         )
-                        // Jika Anda memilih border untuk item terpilih daripada warna background:
-                        // border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
                     ) {
                         Row(
                             modifier = Modifier
@@ -682,7 +705,7 @@ fun DateFilterDialog(
                                     Icons.Outlined.CalendarToday
                                 },
                                 contentDescription = null,
-                                tint = iconColor // Gunakan warna ikon yang sudah ditentukan
+                                tint = iconColor
                             )
                             Spacer(Modifier.width(16.dp))
                             Text(
@@ -694,10 +717,10 @@ fun DateFilterDialog(
                                     DateFilterType.CUSTOM_RANGE -> "Pilih Tanggal"
                                 },
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = textColor, // Gunakan warna teks yang sudah ditentukan
+                                color = textColor,
                                 fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
                             )
-                            Spacer(Modifier.weight(1f)) // Dorong ikon centang ke kanan
+                            Spacer(Modifier.weight(1f))
                             if (isSelected) {
                                 Icon(
                                     imageVector = Icons.Filled.Check,
@@ -717,17 +740,15 @@ fun DateFilterDialog(
                 Text(
                     "TUTUP",
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary // Warna tombol konfirmasi
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         },
-        // Atur warna background AlertDialog itu sendiri jika perlu
-        containerColor = MaterialTheme.colorScheme.surface, // Background utama dialog
-        textContentColor = MaterialTheme.colorScheme.onSurface, // Warna teks default di dalam dialog
+        containerColor = MaterialTheme.colorScheme.surface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
         titleContentColor = MaterialTheme.colorScheme.onSurface
     )
 }
-
 
 @Composable
 fun TransactionContent(
@@ -739,8 +760,12 @@ fun TransactionContent(
     transactions: List<Transaction>,
     currentFilterTypeForProfitCard: DateFilterType,
     referenceDateForProfitCard: Date,
-    userDisplayName: String,          // <- tambahan
-    userPhotoUrl: String?
+    // --- GANTI PARAMETER PROFIL ---
+    userName: String?,
+    userAvatarType: String?,
+    userAvatarValue: String?,
+    userAvatarColor: String?,
+    onProfileClick: () -> Unit
 ) {
     Column(
         modifier = modifier
@@ -751,12 +776,12 @@ fun TransactionContent(
             profit = profit,
             filterType = currentFilterTypeForProfitCard,
             referenceDate = referenceDateForProfitCard,
-            onProfileClick = {
-                // Navigasi ke profile
-                navController.navigate(Screen.MainProfile.route)
-            },
-            userDisplayName = userDisplayName,   // ✅ tambahkan
-            userPhotoUrl = userPhotoUrl          // ✅ tambahkan
+            onProfileClick = onProfileClick,
+            // --- GANTI PARAMETER PROFIL ---
+            userName = userName,
+            userAvatarType = userAvatarType,
+            userAvatarValue = userAvatarValue,
+            userAvatarColor = userAvatarColor
         )
         Spacer(modifier = Modifier.height(16.dp))
         SummaryCard(totalSales = totalSales, totalCost = totalCost)
@@ -774,7 +799,8 @@ fun TransactionContent(
             }
         } else {
             LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(bottom = 2.dp)
             ) {
                 items(transactions, key = { it.transactionId }) { transaction ->
                     TransactionRowItem(
@@ -793,8 +819,10 @@ fun ProfitCard(
     filterType: DateFilterType,
     referenceDate: Date,
     onProfileClick: () -> Unit,
-    userDisplayName: String = "User", // Parameter baru untuk nama user
-    userPhotoUrl: String? = null, // Parameter baru untuk foto user
+    userName: String?,
+    userAvatarType: String?,
+    userAvatarValue: String?,
+    userAvatarColor: String?,
     modifier: Modifier = Modifier
 ) {
     val backgroundColor = Color(0xFF37474F)
@@ -833,7 +861,7 @@ fun ProfitCard(
                 contentScale = ContentScale.Fit
             )
 
-            // Modern Profile Section - di kanan atas
+            // Profile section - PERBAIKAN DI SINI
             Surface(
                 onClick = onProfileClick,
                 shape = RoundedCornerShape(12.dp),
@@ -847,35 +875,37 @@ fun ProfitCard(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Avatar/Profile Picture
-                    if (userPhotoUrl != null) {
-                        AsyncImage(
-                            model = userPhotoUrl,
-                            contentDescription = "Profile Picture",
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .border(2.dp, Color.White.copy(alpha = 0.3f), CircleShape),
-                            contentScale = ContentScale.Crop,
-                            error = painterResource(id = R.drawable.ic_rocket_launch) // Fallback icon
-                        )
-                    } else {
-                        // Default avatar
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = userDisplayName.take(1).uppercase(),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = textColor
+                    // OPSI 1: Gunakan AvatarDisplay dengan border default
+                    AvatarDisplay(
+                        avatarType = userAvatarType ?: "initial",
+                        avatarValue = userAvatarValue ?: "",
+                        avatarColor = userAvatarColor ?: "",
+                        userName = userName ?: "User",
+                        size = 32.dp,
+                        showBorder = false  // matikan border default karena kita buat custom
+                    )
+
+                    // ATAU OPSI 2: Jika ingin border putih custom, bungkus dengan Box
+                    /*
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .border(
+                                width = 2.dp,
+                                color = Color.White.copy(alpha = 0.3f),
+                                shape = CircleShape
                             )
-                        }
+                    ) {
+                        AvatarDisplay(
+                            avatarType = userAvatarType ?: "initial",
+                            avatarValue = userAvatarValue ?: "",
+                            avatarColor = userAvatarColor ?: "",
+                            userName = userName ?: "User",
+                            size = 32.dp,
+                            showBorder = false
+                        )
                     }
+                    */
 
                     Spacer(modifier = Modifier.width(8.dp))
 
@@ -887,7 +917,7 @@ fun ProfitCard(
                             fontSize = 10.sp
                         )
                         Text(
-                            text = userDisplayName.take(8), // Batasi panjang nama
+                            text = (userName ?: "User").take(8),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
                             color = textColor,
@@ -938,71 +968,112 @@ fun ProfitCard(
     }
 }
 
-
 @Composable
 fun SummaryCard(totalSales: Double, totalCost: Double, modifier: Modifier = Modifier) {
-    val cardBackgroundColor = Color(0xFF81B2CA) // Warna #81B2CA
+    val cardBackgroundColor = Color(0xFF81B2CA)
     val cardTextColor = Color.White
+    val accentGreen = Color(0xFF4CAF50)
+    val accentRed = Color(0xFFE57373)
 
     Card(
         modifier = modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(containerColor = cardBackgroundColor) // Set warna background card
+        colors = CardDefaults.cardColors(containerColor = cardBackgroundColor)
     ) {
         Column(
             modifier = Modifier
-                .padding(16.dp)
+                .padding(10.dp)
                 .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Kolom Kiri: Total Penjualan
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.Start
+                Card(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White.copy(alpha = 0.15f)
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
-                    Text(
-                        "Penjualan",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                        color = cardTextColor // Set warna teks
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "Rp ${"%,.0f".format(totalSales).replace(",", ".")}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = cardTextColor // Set warna teks
-                        // Jika ingin warna berbeda untuk nominal penjualan, bisa diubah di sini
-                        // Misalnya: color = Color(0xFFC8E6C9) // Hijau muda yang kontras dengan biru
-                    )
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Pemasukan",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                                color = cardTextColor
+                            )
+                            Icon(
+                                imageVector = Icons.Default.TrendingUp,
+                                contentDescription = "Pemasukan",
+                                tint = accentGreen
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            "Rp ${"%,.0f".format(totalSales).replace(",", ".")}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = cardTextColor
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // Kolom Kanan: Total Pengeluaran
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.End
+                Card(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White.copy(alpha = 0.15f)
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
-                    Text(
-                        "Pengeluaran",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                        color = cardTextColor // Set warna teks
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "Rp ${"%,.0f".format(totalCost).replace(",", ".")}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = cardTextColor // Set warna teks
-                        // Jika ingin warna berbeda untuk nominal pengeluaran, bisa diubah di sini
-                        // Misalnya: color = Color(0xFFFFCDD2) // Merah muda yang kontras dengan biru
-                    )
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.TrendingDown,
+                                contentDescription = "Pengeluaran",
+                                tint = accentRed
+                            )
+                            Text(
+                                "Pengeluaran",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                                color = cardTextColor,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            "Rp ${"%,.0f".format(totalCost).replace(",", ".")}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = cardTextColor,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }
@@ -1011,15 +1082,14 @@ fun SummaryCard(totalSales: Double, totalCost: Double, modifier: Modifier = Modi
 
 @Composable
 fun TransactionRowItem(
-    // --- PERUBAHAN ---
-    transaction: Transaction, // Sekarang menggunakan model domain Transaction
+    transaction: Transaction,
     navController: NavController,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { // <<<--- INI BAGIAN PENTING UNTUK NAVIGASI
+            .clickable {
                 navController.navigate(Screen.TransactionDetail.createRoute(transaction.transactionId))
             },
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -1042,11 +1112,10 @@ fun TransactionRowItem(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    // --- PERUBAHAN --- Format objek Date
                     text = try {
                         displayDateFormat.format(transaction.date)
                     } catch (e: Exception) {
-                        "Tanggal tidak valid" // Fallback jika format gagal
+                        "Tanggal tidak valid"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1056,19 +1125,16 @@ fun TransactionRowItem(
             Spacer(modifier = Modifier.width(16.dp))
 
             Column(horizontalAlignment = Alignment.End) {
-                // --- PERUBAHAN --- Logika berdasarkan transaction.interpretedType
-                var displayedAmount = false // Variabel ini mungkin perlu direvisi sedikit logikanya
+                var displayedAmount = false
                 when (transaction.interpretedType) {
                     InterpretedDomainType.SALE_WITH_COST -> {
-                        // Tampilkan harga jual (sellingPrice) sebagai pemasukan
                         Text(
                             text = "+ Rp ${"%,.0f".format(transaction.sellingPrice ?: 0.0).replace(",", ".")}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF4CAF50) // Hijau
+                            color = Color(0xFF4CAF50)
                         )
                         displayedAmount = true
-                        // Tampilkan harga modal (amount) jika ada
                         if (transaction.amount > 0) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
@@ -1078,35 +1144,29 @@ fun TransactionRowItem(
                             )
                         }
                     }
-                    InterpretedDomainType.PURE_INCOME -> { // <<< TAMBAHKAN CABANG INI
-                        // Tampilkan 'amount' sebagai pemasukan murni
+                    InterpretedDomainType.PURE_INCOME -> {
                         Text(
                             text = "+ Rp ${"%,.0f".format(transaction.amount).replace(",", ".")}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF4CAF50) // Hijau
+                            color = Color(0xFF4CAF50)
                         )
                         displayedAmount = true
                     }
                     InterpretedDomainType.PURE_EXPENSE -> {
-                        // Tampilkan 'amount' sebagai pengeluaran
                         Text(
                             text = "- Rp ${"%,.0f".format(transaction.amount).replace(",", ".")}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF44336) // Merah
+                            color = Color(0xFFF44336)
                         )
                         displayedAmount = true
                     }
-                    // Jika enum Anda hanya memiliki 3 nilai ini, else tidak diperlukan.
-                    // Jika ada kemungkinan nilai lain (meskipun seharusnya tidak), tambahkan else.
                 }
 
                 if (!displayedAmount && transaction.interpretedType !in listOf(InterpretedDomainType.SALE_WITH_COST, InterpretedDomainType.PURE_INCOME, InterpretedDomainType.PURE_EXPENSE)) {
-                    // Logika fallback ini mungkin perlu disesuaikan atau dihilangkan
-                    // jika semua kasus InterpretedDomainType yang valid sudah menangani displayedAmount
                     Text(
-                        text = "Rp 0", // Fallback jika tidak ada nominal yang ditampilkan
+                        text = "Rp 0",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -1116,29 +1176,27 @@ fun TransactionRowItem(
     }
 }
 
-// --- PERUBAHAN --- Preview perlu disesuaikan
 @Preview(showBackground = true, widthDp = 360)
 @Composable
-fun TransactionRowItemDomainPreview() { // Ubah nama preview agar jelas
+fun TransactionRowItemDomainPreview() {
     XKasTheme {
-        // --- PERUBAHAN --- Gunakan model domain Transaction untuk data preview
-        val now = Date() // Untuk createdAt, updatedAt, dan date
-        val navController = rememberNavController() // <<<--- TAMBAHKAN INI
+        val now = Date()
+        val navController = rememberNavController()
         Column {
             TransactionRowItem(
                 transaction = Transaction(
                     transactionId ="1",
                     userId="user1",
                     description = "Penjualan Barang (Domain Preview)",
-                    date = now, // Objek Date
-                    type = "income", // String asli dari Firestore
-                    amount = 100000.0,      // Modal
-                    sellingPrice = 150000.0, // Harga Jual
+                    date = now,
+                    type = "income",
+                    amount = 100000.0,
+                    sellingPrice = 150000.0,
                     createdAt = now,
                     updatedAt = null,
-                    interpretedType = InterpretedDomainType.SALE_WITH_COST // Tipe domain
+                    interpretedType = InterpretedDomainType.SALE_WITH_COST
                 ),
-                navController = navController // <<<--- TERUSKAN INI
+                navController = navController
             )
             Spacer(Modifier.height(8.dp))
             TransactionRowItem(
@@ -1146,15 +1204,15 @@ fun TransactionRowItemDomainPreview() { // Ubah nama preview agar jelas
                     transactionId ="2",
                     userId="user1",
                     description = "Pembelian ATK (Domain Preview)",
-                    date = Date(now.time - 86400000), // Kemarin
+                    date = Date(now.time - 86400000),
                     type = "expense",
-                    amount = 75000.0,       // Nominal Pengeluaran
+                    amount = 75000.0,
                     sellingPrice = null,
                     createdAt = Date(now.time - 86400000),
                     updatedAt = null,
                     interpretedType = InterpretedDomainType.PURE_EXPENSE
                 ),
-                navController = navController // <<<--- TERUSKAN INI
+                navController = navController
             )
             Spacer(Modifier.height(8.dp))
             TransactionRowItem(
@@ -1162,20 +1220,19 @@ fun TransactionRowItemDomainPreview() { // Ubah nama preview agar jelas
                     transactionId ="3",
                     userId="user1",
                     description = "Jasa Desain Logo (Domain Preview)",
-                    date = Date(now.time - (2 * 86400000)), // 2 hari lalu
+                    date = Date(now.time - (2 * 86400000)),
                     type = "income",
-                    amount = 0.0,           // Modal (mungkin 0 untuk jasa)
-                    sellingPrice = 250000.0, // Harga Jual Jasa
+                    amount = 0.0,
+                    sellingPrice = 250000.0,
                     createdAt = Date(now.time - (2 * 86400000)),
                     updatedAt = null,
                     interpretedType = InterpretedDomainType.SALE_WITH_COST
                 ),
-                navController = navController // <<<--- TERUSKAN INI
+                navController = navController
             )
         }
     }
 }
-
 
 @Preview(showBackground = true, device = "spec:width=375dp,height=812dp,dpi=480")
 @Composable
@@ -1206,7 +1263,6 @@ fun MainHomeScreenDomainPreview() {
                 InterpretedDomainType.SALE_WITH_COST -> transaction.sellingPrice ?: 0.0
                 InterpretedDomainType.PURE_INCOME -> transaction.amount
                 InterpretedDomainType.PURE_EXPENSE -> 0.0
-                // else -> 0.0 // Jika InterpretedDomainType bukan enum yang exhaustive
             }
         }
 
@@ -1215,20 +1271,16 @@ fun MainHomeScreenDomainPreview() {
                 InterpretedDomainType.SALE_WITH_COST -> transaction.amount
                 InterpretedDomainType.PURE_EXPENSE -> transaction.amount
                 InterpretedDomainType.PURE_INCOME -> 0.0
-                // else -> 0.0 // Jika InterpretedDomainType bukan enum yang exhaustive
             }
         }
 
         val profitPreview = totalSalesPreview - totalCostPreview
 
-        // --- PERUBAHAN UNTUK PREVIEW ---
-        val previewFilterType = DateFilterType.THIS_MONTH // Atau filter lain untuk pengujian
+        val previewFilterType = DateFilterType.THIS_MONTH
         val dateForPreviewProfitCard = if (dummyDomainTransactions.isNotEmpty() &&
             (previewFilterType == DateFilterType.ALL_TIME || previewFilterType == DateFilterType.THIS_MONTH)) {
-            // Untuk preview, jika THIS_MONTH atau ALL_TIME, coba gunakan tanggal transaksi pertama
             dummyDomainTransactions.first().date
         } else {
-            // Untuk TODAY, THIS_WEEK, atau jika tidak ada transaksi, gunakan tanggal saat ini
             Date()
         }
 
@@ -1240,8 +1292,12 @@ fun MainHomeScreenDomainPreview() {
             transactions = dummyDomainTransactions,
             currentFilterTypeForProfitCard = previewFilterType,
             referenceDateForProfitCard = dateForPreviewProfitCard,
-            userDisplayName = "User Preview",
-            userPhotoUrl = null
+            onProfileClick = { },
+            // --- PREVIEW DENGAN DATA PROFIL DUMMY ---
+            userName = "John Doe",
+            userAvatarType = "initial",
+            userAvatarValue = "J",
+            userAvatarColor = "#FF6B6B"
         )
     }
 }

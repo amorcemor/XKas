@@ -30,10 +30,6 @@ val bottomNavItems = listOf(
 //        icon = Icons.Filled.AccountBalanceWallet,
         route = Screen.MainDebt.route,
 //        isDevelopment = true // Tandai item ini sebagai dalam pengembangan
-    ),
-    BottomNavItem(
-        label = "Profil",
-        icon = Icons.Filled.AccountCircle, // Ikon standar untuk Profil
-        route = Screen.MainProfile.route
     )
+
 )
